@@ -204,6 +204,11 @@
 bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh)
 ```
 
+* 纯 IPv6 主机（无法直连 GitHub 时）：
+```
+bash <(wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh)
+```
+
 * 再次运行
 ```
 sb
