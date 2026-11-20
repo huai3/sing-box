@@ -27,6 +27,8 @@
 
 * * *
 ## 1.更新信息
+2026.11.21 新增中转 / 落地出口管理 (`sb -o` 或在 `sb` / `sb -d` 菜单中进入)：支持直接粘贴落地机分享链接 (`vless://`、`ss://`、`hy2://`、`tuic://`、`trojan://`、`socks5://`、`http://`) 或原生 sing-box outbound JSON 自动生成独立配置 (`08_relay_outbound.json` / `09_relay_route.json`)，支持全局中转、按入站协议/端口分流、按域名后缀分流、一键恢复直连以及 `sing-box check` 失败自动回滚；同步支持 `config.conf` / 命令行参数 `--RELAY_URI`、`--RELAY_MODE`、`--RELAY_DOMAINS` 无交互部署
+
 2026.11.18 Fork 优化版：移除全部内置 WARP 链式代理解锁 ChatGPT 组件（服务端纯直连出站，零外部远程规则集依赖）；修复纯 IPv6 主机下 GitHub 代理并发探测竞态（`wait -n` 误杀可用双栈代理）、版本号校验污染及内核下载失败问题，支持多代理自动故障转移与本地 `sb` 离线兜底；修复 `sb -d` 修改参数误改二进制、修改起始端口冲突、`config.conf` 无交互参数失效、`clash2` 漏掉 H2+Reality、Throne 自定义 CDN 端口失效及 Alpine BusyBox `base64` 兼容等问题
 
 2026.11.17 v1.3.31 Add dynamic subscription (render subscription by request Host): a post-install feature, available via `sb -d` only after a fresh install with subscription enabled. Direct node servers follow the access address (IPv4/IPv6/Domain/Tunnel), supporting multi-IP servers and IPv6 address pools; 新增动态订阅（按请求 Host 实时渲染）：安装后功能，需先完成新安装并开启订阅，再通过 `sb -d` 添加；直连节点 server 跟随访问地址（IPv4/IPv6/域名/固定隧道），适配多 IP 机器与 IPv6 地址池

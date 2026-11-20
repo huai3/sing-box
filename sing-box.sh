@@ -422,6 +422,68 @@ E[204]="Domain"
 C[204]="域名"
 E[205]="Tunnel"
 C[205]="隧道"
+E[206]="Relay / Landing outbound management (sb -o)"
+C[206]="中转 / 落地出口管理 (sb -o)"
+E[207]="Relay / Landing outbound  (current: \${VAL_ITEM})"
+C[207]="中转 / 落地出口  (当前: \${VAL_ITEM})"
+E[208]="Direct (disabled)"
+C[208]="直连 (未启用)"
+E[209]="Global -> "
+C[209]="全局 -> "
+E[210]="Rules -> "
+C[210]="规则分流 -> "
+E[211]="Add landing outbound (paste share link or sing-box outbound JSON)"
+C[211]="添加落地机出口 (支持粘贴分享链接或 sing-box outbound JSON)"
+E[212]="Set global default outbound (global relay / revert to direct)"
+C[212]="设置全局默认出口 (全局中转 / 恢复直连)"
+E[213]="Route by inbound protocol / port"
+C[213]="按入站协议 / 端口分流"
+E[214]="Route by domain suffix"
+C[214]="按域名后缀分流"
+E[215]="Delete a landing outbound"
+C[215]="删除已添加的落地机出口"
+E[216]="Disable relay & clear routing rules (revert to pure direct)"
+C[216]="一键关闭中转并清空路由规则 (恢复纯直连)"
+E[217]="View current relay config JSON"
+C[217]="查看当前中转配置详情"
+E[218]="Paste landing node URI (vless/ss/hy2/tuic/trojan/socks5/http) or sing-box outbound JSON:"
+C[218]="请粘贴落地机分享链接 (vless/ss/hy2/tuic/trojan/socks5/http) 或 sing-box outbound JSON:"
+E[219]="Outbound tag (Enter for default:"
+C[219]="出口标签名 (回车默认:"
+E[220]="Failed to parse URI/JSON. Please check the format."
+C[220]="解析链接或 JSON 失败，请检查格式是否正确。"
+E[221]="Set this outbound as the global default relay now? [Y/n] (default Y):"
+C[221]="是否立即将此落地机设为全局中转出口? [Y/n] (默认 Y):"
+E[222]="Relay config validated and applied!"
+C[222]="中转配置校验通过并已生效!"
+E[223]="sing-box config check failed! Reverted to previous config:"
+C[223]="sing-box 配置校验失败! 已自动回滚到修改前的配置:"
+E[224]="No landing outbounds configured yet. Please add one first."
+C[224]="尚未添加任何落地机出口，请先添加落地机。"
+E[225]="Select target outbound:"
+C[225]="请选择目标出口:"
+E[226]="Select inbound to route:"
+C[226]="请选择要分流的入站协议 / 端口:"
+E[227]="Enter domain suffixes separated by commas (e.g. openai.com,netflix.com):"
+C[227]="请输入要分流的域名后缀，多个用英文逗号分隔 (例如 openai.com,netflix.com):"
+E[228]="Also delete all saved landing outbounds? [y/N] (default N):"
+C[228]="是否同时删除已保存的所有落地机出口? [y/N] (默认 N):"
+E[229]="Relay disabled. Restored pure direct mode."
+C[229]="已关闭中转，恢复为纯直连模式。"
+E[230]="Current Relay / Landing Outbound Status"
+C[230]="当前中转 / 落地出口状态"
+E[231]="Configured landing outbounds:"
+C[231]="已配置的落地机出口:"
+E[232]="Default outbound (final):"
+C[232]="默认出口 (final):"
+E[233]="Custom routing rules:"
+C[233]="自定义分流规则:"
+E[234]="None"
+C[234]="无"
+E[235]="No installed inbounds found."
+C[235]="未检测到已安装的入站配置。"
+E[236]="Outbound deleted."
+C[236]="已删除该落地机出口。"
 
 # 自定义字体彩色，read 函数
 warning() { echo -e "\033[31m\033[01m$*\033[0m"; }  # 红色
@@ -731,6 +793,848 @@ input_node_name() {
   fi
 }
 
+# ======================== 中转 / 落地出口管理模块 ========================
+RELAY_OUTBOUND_FILE="${WORK_DIR}/conf/08_relay_outbound.json"
+RELAY_ROUTE_FILE="${WORK_DIR}/conf/09_relay_route.json"
+
+# URL 百分号解码（保留字面 '+'，避免破坏 SS-2022 / Base64 密钥）
+relay_url_decode() {
+  local data="$1"
+  printf '%b' "${data//%/\\x}"
+}
+
+relay_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# 兼容 URL-safe / 缺填充 / GNU 与 BusyBox 的 Base64 解码
+relay_b64_decode() {
+  local s="${1//-/+}"
+  s="${s//_//}"
+  s=$(printf '%s' "$s" | tr -d ' \t\r\n')
+  local rem=$(( ${#s} % 4 ))
+  if [ "$rem" -eq 2 ]; then
+    s="${s}=="
+  elif [ "$rem" -eq 3 ]; then
+    s="${s}="
+  fi
+  printf '%s' "$s" | base64 -d 2>/dev/null || printf '%s' "$s" | base64 -D 2>/dev/null
+}
+
+# 拆分 host:port（兼容 IPv6 [addr]:port 与 IPv4/域名 addr:port）
+relay_split_host_port() {
+  local hp="$1"
+  RELAY_HOST=""
+  RELAY_PORT=""
+  if [[ "$hp" =~ ^\[([^\]]+)\]:([0-9]+)$ ]]; then
+    RELAY_HOST="${BASH_REMATCH[1]}"
+    RELAY_PORT="${BASH_REMATCH[2]}"
+    return 0
+  elif [[ "$hp" =~ ^([^:]+):([0-9]+)$ ]]; then
+    RELAY_HOST="${BASH_REMATCH[1]}"
+    RELAY_PORT="${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
+# 从 URL query 字符串提取指定参数值（键名大小写不敏感）
+relay_get_query_param() {
+  local query="$1" key="$2" pair k v
+  local key_l
+  key_l=$(relay_lower "$key")
+  local IFS='&'
+  for pair in $query; do
+    k="${pair%%=*}"
+    if [ "$(relay_lower "$k")" = "$key_l" ]; then
+      if [ "$k" = "$pair" ]; then
+        v=""
+      else
+        v="${pair#*=}"
+      fi
+      relay_url_decode "$v"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 从分享链接提取 #remark（避免 subshell 传值失效）
+relay_extract_remark() {
+  local raw="$1"
+  raw=$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  if [[ "$raw" == \{* ]]; then
+    printf '%s' "$raw" | jq_exec -r '.tag // ""' 2>/dev/null
+  elif [[ "$raw" == *#* ]]; then
+    relay_url_decode "${raw#*#}"
+  fi
+}
+
+# 生成合法且不重复的出口 tag（避免与 direct/block 或已有 tag 冲突）
+relay_suggest_tag() {
+  local raw_remark="$1"
+  local clean=""
+  if [ -n "$raw_remark" ]; then
+    clean=$(printf '%s' "$raw_remark" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//' | cut -c1-24)
+  fi
+  [ -z "$clean" ] && clean="node"
+  [[ "$clean" =~ ^(direct|block|dns-out)$ ]] && clean="relay-${clean}"
+  [[ "$clean" != relay-* ]] && clean="relay-${clean}"
+  local cand="$clean" n=2
+  while [ -s "$RELAY_OUTBOUND_FILE" ] && jq_exec -e --arg t "$cand" '.outbounds[]? | select(.tag == $t)' "$RELAY_OUTBOUND_FILE" >/dev/null 2>&1; do
+    cand="${clean}-${n}"
+    ((n++)) || true
+  done
+  printf '%s' "$cand"
+}
+
+# 将分享链接或原生 sing-box outbound JSON 解析为标准 sing-box outbound JSON
+# 用法: relay_parse_uri "<uri_or_json>" "<tag>"
+# 成功时 stdout 输出格式化 JSON，并设置全局 RELAY_PARSED_REMARK
+relay_parse_uri() {
+  local raw="$1" tag="$2"
+  raw=$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  RELAY_PARSED_REMARK=""
+  [ -z "$raw" ] && return 1
+
+  # 1. 原生 sing-box outbound JSON
+  if [[ "$raw" == \{* ]]; then
+    local parsed
+    parsed=$(printf '%s' "$raw" | jq_exec -e --arg tag "$tag" '
+      if (type == "object" and (.type | type == "string") and (.type | length > 0)) then
+        if ($tag != "") then .tag = $tag
+        elif ((.tag // "") == "") then .tag = "relay-node"
+        else . end
+      else error("invalid") end
+    ' 2>/dev/null) || return 1
+    printf '%s\n' "$parsed"
+    return 0
+  fi
+
+  local scheme="${raw%%://*}"
+  [ "$scheme" = "$raw" ] && return 1
+  scheme=$(relay_lower "$scheme")
+  local rest="${raw#*://}"
+
+  # 分离 #remark
+  local remark=""
+  if [[ "$rest" == *#* ]]; then
+    remark=$(relay_url_decode "${rest#*#}")
+    rest="${rest%%#*}"
+  fi
+  RELAY_PARSED_REMARK="$remark"
+
+  # 分离 ?query
+  local query=""
+  if [[ "$rest" == *\?* ]]; then
+    query="${rest#*\?}"
+    rest="${rest%%\?*}"
+  fi
+  # 去除 host:port 后可能残留的斜杠
+  rest="${rest%/}"
+
+  local out_tag="${tag:-relay-node}"
+
+  case "$scheme" in
+    vless)
+      [[ "$rest" != *@* ]] && return 1
+      local uuid hostport
+      uuid=$(relay_url_decode "${rest%%@*}")
+      hostport="${rest#*@}"
+      relay_split_host_port "$hostport" || return 1
+      local net_type security sni pbk sid fp flow path ws_host svc alpn insecure
+      net_type=$(relay_get_query_param "$query" "type" || true); net_type=$(relay_lower "$net_type"); [ -z "$net_type" ] && net_type="tcp"
+      security=$(relay_get_query_param "$query" "security" || true); security=$(relay_lower "$security")
+      sni=$(relay_get_query_param "$query" "sni" || true)
+      pbk=$(relay_get_query_param "$query" "pbk" || true)
+      sid=$(relay_get_query_param "$query" "sid" || true)
+      fp=$(relay_get_query_param "$query" "fp" || true)
+      flow=$(relay_get_query_param "$query" "flow" || true)
+      path=$(relay_get_query_param "$query" "path" || true)
+      ws_host=$(relay_get_query_param "$query" "host" || true)
+      svc=$(relay_get_query_param "$query" "serviceName" || true)
+      alpn=$(relay_get_query_param "$query" "alpn" || true)
+      insecure=$(relay_get_query_param "$query" "allowInsecure" || relay_get_query_param "$query" "insecure" || true)
+      [ -z "$security" ] && [ -n "$pbk" ] && security="reality"
+
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg uuid "$uuid" \
+        --arg flow "$flow" \
+        --arg security "$security" \
+        --arg sni "${sni:-$RELAY_HOST}" \
+        --arg pbk "$pbk" \
+        --arg sid "$sid" \
+        --arg fp "$fp" \
+        --arg alpn "$alpn" \
+        --arg insecure "$insecure" \
+        --arg net_type "$net_type" \
+        --arg path "${path:-/}" \
+        --arg ws_host "$ws_host" \
+        --arg svc "$svc" '
+        {
+          type: "vless",
+          tag: $tag,
+          server: $server,
+          server_port: $port,
+          uuid: $uuid
+        }
+        + (if $flow != "" then { flow: $flow } else {} end)
+        + (if $security == "reality" then {
+            tls: {
+              enabled: true,
+              server_name: $sni,
+              utls: { enabled: true, fingerprint: (if $fp != "" then $fp else "chrome" end) },
+              reality: { enabled: true, public_key: $pbk, short_id: $sid }
+            }
+          }
+          elif $security == "tls" then {
+            tls: (
+              { enabled: true, server_name: $sni }
+              + (if ($insecure == "1" or $insecure == "true") then { insecure: true } else {} end)
+              + (if $fp != "" then { utls: { enabled: true, fingerprint: $fp } } else {} end)
+              + (if $alpn != "" then { alpn: ($alpn | split(",") | map(select(length > 0))) } else {} end)
+            )
+          }
+          else {} end)
+        + (if $net_type == "ws" then {
+            transport: ({ type: "ws", path: $path } + (if $ws_host != "" then { headers: { Host: $ws_host } } else {} end))
+          }
+          elif $net_type == "grpc" then {
+            transport: { type: "grpc", service_name: $svc }
+          }
+          elif $net_type == "httpupgrade" then {
+            transport: ({ type: "httpupgrade", path: $path } + (if $ws_host != "" then { host: $ws_host } else {} end))
+          }
+          elif ($net_type == "http" or $net_type == "h2") then {
+            transport: ({ type: "http", path: $path } + (if $ws_host != "" then { host: [$ws_host] } else {} end))
+          }
+          else {} end)
+      '
+      ;;
+
+    ss)
+      local method="" password="" hostport="" userinfo=""
+      if [[ "$rest" == *@* ]]; then
+        userinfo="${rest%%@*}"
+        hostport="${rest#*@}"
+        local dec_ui
+        dec_ui=$(relay_url_decode "$userinfo")
+        if [[ "$dec_ui" == *:* ]] && [[ "${dec_ui%%:*}" =~ ^[a-zA-Z0-9-]+$ ]]; then
+          method="${dec_ui%%:*}"
+          password="${dec_ui#*:}"
+        else
+          dec_ui=$(relay_b64_decode "$userinfo")
+          [[ "$dec_ui" != *:* ]] && return 1
+          method="${dec_ui%%:*}"
+          password="${dec_ui#*:}"
+        fi
+      else
+        local full_dec
+        full_dec=$(relay_b64_decode "$rest")
+        [[ "$full_dec" != *@* ]] && return 1
+        userinfo="${full_dec%%@*}"
+        hostport="${full_dec#*@}"
+        [[ "$userinfo" != *:* ]] && return 1
+        method="${userinfo%%:*}"
+        password="${userinfo#*:}"
+      fi
+      relay_split_host_port "$hostport" || return 1
+      [ -z "$method" ] && return 1
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg method "$method" \
+        --arg password "$password" '
+        {
+          type: "shadowsocks",
+          tag: $tag,
+          server: $server,
+          server_port: $port,
+          method: $method,
+          password: $password
+        }
+      '
+      ;;
+
+    hy2|hysteria2)
+      [[ "$rest" != *@* ]] && return 1
+      local password hostport
+      password=$(relay_url_decode "${rest%%@*}")
+      hostport="${rest#*@}"
+      relay_split_host_port "$hostport" || return 1
+      local sni insecure obfs obfs_pw mport
+      sni=$(relay_get_query_param "$query" "sni" || true)
+      insecure=$(relay_get_query_param "$query" "insecure" || relay_get_query_param "$query" "allowInsecure" || true)
+      obfs=$(relay_get_query_param "$query" "obfs" || true)
+      obfs_pw=$(relay_get_query_param "$query" "obfs-password" || true)
+      mport=$(relay_get_query_param "$query" "mport" || true)
+      mport="${mport//-/:}"
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg password "$password" \
+        --arg sni "${sni:-$RELAY_HOST}" \
+        --arg insecure "$insecure" \
+        --arg obfs "$obfs" \
+        --arg obfs_pw "$obfs_pw" \
+        --arg mport "$mport" '
+        {
+          type: "hysteria2",
+          tag: $tag,
+          server: $server,
+          password: $password,
+          tls: (
+            { enabled: true, server_name: $sni }
+            + (if ($insecure == "1" or $insecure == "true") then { insecure: true } else {} end)
+          )
+        }
+        + (if $mport != "" then { server_ports: ($mport | split(",") | map(select(length > 0))) } else { server_port: $port } end)
+        + (if $obfs != "" then { obfs: { type: $obfs, password: $obfs_pw } } else {} end)
+      '
+      ;;
+
+    tuic)
+      [[ "$rest" != *@* ]] && return 1
+      local userinfo hostport uuid password
+      userinfo=$(relay_url_decode "${rest%%@*}")
+      hostport="${rest#*@}"
+      [[ "$userinfo" != *:* ]] && return 1
+      uuid="${userinfo%%:*}"
+      password="${userinfo#*:}"
+      relay_split_host_port "$hostport" || return 1
+      local sni cc alpn insecure udp_mode
+      sni=$(relay_get_query_param "$query" "sni" || true)
+      cc=$(relay_get_query_param "$query" "congestion_control" || true)
+      alpn=$(relay_get_query_param "$query" "alpn" || true)
+      insecure=$(relay_get_query_param "$query" "allow_insecure" || relay_get_query_param "$query" "insecure" || true)
+      udp_mode=$(relay_get_query_param "$query" "udp_relay_mode" || true)
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg uuid "$uuid" \
+        --arg password "$password" \
+        --arg sni "${sni:-$RELAY_HOST}" \
+        --arg cc "${cc:-bbr}" \
+        --arg alpn "${alpn:-h3}" \
+        --arg insecure "$insecure" \
+        --arg udp_mode "$udp_mode" '
+        {
+          type: "tuic",
+          tag: $tag,
+          server: $server,
+          server_port: $port,
+          uuid: $uuid,
+          password: $password,
+          congestion_control: $cc,
+          tls: (
+            { enabled: true, server_name: $sni, alpn: ($alpn | split(",") | map(select(length > 0))) }
+            + (if ($insecure == "1" or $insecure == "true") then { insecure: true } else {} end)
+          )
+        }
+        + (if $udp_mode != "" then { udp_relay_mode: $udp_mode } else {} end)
+      '
+      ;;
+
+    trojan)
+      [[ "$rest" != *@* ]] && return 1
+      local password hostport
+      password=$(relay_url_decode "${rest%%@*}")
+      hostport="${rest#*@}"
+      relay_split_host_port "$hostport" || return 1
+      local sni insecure fp net_type path ws_host svc alpn
+      sni=$(relay_get_query_param "$query" "sni" || true)
+      insecure=$(relay_get_query_param "$query" "allowInsecure" || relay_get_query_param "$query" "insecure" || true)
+      fp=$(relay_get_query_param "$query" "fp" || true)
+      net_type=$(relay_get_query_param "$query" "type" || true); net_type=$(relay_lower "$net_type"); [ -z "$net_type" ] && net_type="tcp"
+      path=$(relay_get_query_param "$query" "path" || true)
+      ws_host=$(relay_get_query_param "$query" "host" || true)
+      svc=$(relay_get_query_param "$query" "serviceName" || true)
+      alpn=$(relay_get_query_param "$query" "alpn" || true)
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg password "$password" \
+        --arg sni "${sni:-$RELAY_HOST}" \
+        --arg insecure "$insecure" \
+        --arg fp "$fp" \
+        --arg alpn "$alpn" \
+        --arg net_type "$net_type" \
+        --arg path "${path:-/}" \
+        --arg ws_host "$ws_host" \
+        --arg svc "$svc" '
+        {
+          type: "trojan",
+          tag: $tag,
+          server: $server,
+          server_port: $port,
+          password: $password,
+          tls: (
+            { enabled: true, server_name: $sni }
+            + (if ($insecure == "1" or $insecure == "true") then { insecure: true } else {} end)
+            + (if $fp != "" then { utls: { enabled: true, fingerprint: $fp } } else {} end)
+            + (if $alpn != "" then { alpn: ($alpn | split(",") | map(select(length > 0))) } else {} end)
+          )
+        }
+        + (if $net_type == "ws" then {
+            transport: ({ type: "ws", path: $path } + (if $ws_host != "" then { headers: { Host: $ws_host } } else {} end))
+          }
+          elif $net_type == "grpc" then {
+            transport: { type: "grpc", service_name: $svc }
+          }
+          else {} end)
+      '
+      ;;
+
+    socks|socks5)
+      local user="" pass="" hostport="$rest"
+      if [[ "$rest" == *@* ]]; then
+        local ui="${rest%%@*}"
+        hostport="${rest#*@}"
+        local dec_ui
+        dec_ui=$(relay_url_decode "$ui")
+        if [[ "$dec_ui" == *:* ]]; then
+          user="${dec_ui%%:*}"
+          pass="${dec_ui#*:}"
+        else
+          local b64_ui
+          b64_ui=$(relay_b64_decode "$ui")
+          if [[ "$b64_ui" == *:* ]]; then
+            user="${b64_ui%%:*}"
+            pass="${b64_ui#*:}"
+          else
+            user="$dec_ui"
+          fi
+        fi
+      fi
+      relay_split_host_port "$hostport" || return 1
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg user "$user" \
+        --arg pass "$pass" '
+        {
+          type: "socks",
+          tag: $tag,
+          server: $server,
+          server_port: $port,
+          version: "5"
+        }
+        + (if $user != "" then { username: $user } else {} end)
+        + (if $pass != "" then { password: $pass } else {} end)
+      '
+      ;;
+
+    http|https)
+      local user="" pass="" hostport="$rest"
+      if [[ "$rest" == *@* ]]; then
+        local ui
+        ui=$(relay_url_decode "${rest%%@*}")
+        hostport="${rest#*@}"
+        if [[ "$ui" == *:* ]]; then
+          user="${ui%%:*}"
+          pass="${ui#*:}"
+        else
+          user="$ui"
+        fi
+      fi
+      relay_split_host_port "$hostport" || return 1
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg user "$user" \
+        --arg pass "$pass" \
+        --arg scheme "$scheme" '
+        {
+          type: "http",
+          tag: $tag,
+          server: $server,
+          server_port: $port
+        }
+        + (if $user != "" then { username: $user } else {} end)
+        + (if $pass != "" then { password: $pass } else {} end)
+        + (if $scheme == "https" then { tls: { enabled: true, server_name: $server } } else {} end)
+      '
+      ;;
+
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# 获取中转状态简短摘要（供 sb -d 菜单显示）
+relay_status_summary() {
+  local final_tag="" rule_cnt=0
+  if [ -s "$RELAY_ROUTE_FILE" ]; then
+    final_tag=$(jq_exec -r '.route.final // ""' "$RELAY_ROUTE_FILE" 2>/dev/null)
+    rule_cnt=$(jq_exec -r '(.route.rules // []) | length' "$RELAY_ROUTE_FILE" 2>/dev/null || echo 0)
+  fi
+  if [ -n "$final_tag" ] && [ "$final_tag" != "direct" ]; then
+    printf '%s%s' "$(text 209)" "$final_tag"
+  elif [ "${rule_cnt:-0}" -gt 0 ] 2>/dev/null; then
+    printf '%s%s' "$(text 210)" "${rule_cnt}"
+  else
+    printf '%s' "$(text 208)"
+  fi
+}
+
+# 原子校验并应用中转配置（支持失败自动回滚）
+# 用法: relay_commit_files "<new_outbound_tmp_or_keep_or_delete>" "<new_route_tmp_or_keep_or_delete>" [norestart]
+relay_commit_files() {
+  local new_ob="$1" new_rt="$2" mode="$3"
+  local bak_ob="${TEMP_DIR}/relay_ob.bak" bak_rt="${TEMP_DIR}/relay_rt.bak"
+  local had_ob=0 had_rt=0
+  mkdir -p "$TEMP_DIR" "${WORK_DIR}/conf"
+  if [ -f "$RELAY_OUTBOUND_FILE" ]; then cp -f "$RELAY_OUTBOUND_FILE" "$bak_ob"; had_ob=1; fi
+  if [ -f "$RELAY_ROUTE_FILE" ]; then cp -f "$RELAY_ROUTE_FILE" "$bak_rt"; had_rt=1; fi
+
+  if [ "$new_ob" = "__DELETE__" ]; then
+    rm -f "$RELAY_OUTBOUND_FILE"
+  elif [ "$new_ob" != "__KEEP__" ] && [ -n "$new_ob" ]; then
+    cp -f "$new_ob" "$RELAY_OUTBOUND_FILE"
+  fi
+
+  if [ "$new_rt" = "__DELETE__" ]; then
+    rm -f "$RELAY_ROUTE_FILE"
+  elif [ "$new_rt" != "__KEEP__" ] && [ -n "$new_rt" ]; then
+    cp -f "$new_rt" "$RELAY_ROUTE_FILE"
+  fi
+
+  local check_bin="${WORK_DIR}/sing-box"
+  [ ! -x "$check_bin" ] && [ -x "${TEMP_DIR}/sing-box" ] && check_bin="${TEMP_DIR}/sing-box"
+  if [ -x "$check_bin" ]; then
+    local check_err
+    if ! check_err=$("$check_bin" check -C "${WORK_DIR}/conf/" 2>&1); then
+      [ "$had_ob" = 1 ] && cp -f "$bak_ob" "$RELAY_OUTBOUND_FILE" || rm -f "$RELAY_OUTBOUND_FILE"
+      [ "$had_rt" = 1 ] && cp -f "$bak_rt" "$RELAY_ROUTE_FILE" || rm -f "$RELAY_ROUTE_FILE"
+      rm -f "$bak_ob" "$bak_rt"
+      warning "\n $(text 223)\n ${check_err}\n"
+      return 1
+    fi
+  fi
+
+  rm -f "$bak_ob" "$bak_rt"
+  if [ "$mode" != "norestart" ]; then
+    cmd_systemctl restart sing-box
+  fi
+  info "\n $(text 222) \n"
+  return 0
+}
+
+# 将单个 outbound JSON 写入/更新到临时文件，返回临时文件路径
+relay_prepare_upsert_outbound() {
+  local ob_json="$1" out_tmp="$2"
+  local tag
+  tag=$(printf '%s' "$ob_json" | jq_exec -r '.tag')
+  if [ -s "$RELAY_OUTBOUND_FILE" ]; then
+    jq_exec --argjson ob "$ob_json" --arg tag "$tag" '
+      .outbounds = ((.outbounds // []) | map(select(.tag != $tag)) + [$ob])
+    ' "$RELAY_OUTBOUND_FILE" > "$out_tmp"
+  else
+    jq_exec -n --argjson ob "$ob_json" '{ outbounds: [$ob] }' > "$out_tmp"
+  fi
+}
+
+# 更新 09_relay_route.json 的 final 字段到临时文件（若 final=direct 且无 rules 则返回 __DELETE__）
+relay_prepare_set_final() {
+  local target_tag="$1" rt_tmp="$2"
+  local cur_rules='[]'
+  if [ -s "$RELAY_ROUTE_FILE" ]; then
+    cur_rules=$(jq_exec -c '.route.rules // []' "$RELAY_ROUTE_FILE" 2>/dev/null || echo '[]')
+  fi
+  if [ "$target_tag" = "direct" ] || [ -z "$target_tag" ]; then
+    if [ "$(printf '%s' "$cur_rules" | jq_exec 'length')" -eq 0 ]; then
+      printf '__DELETE__'
+      return 0
+    fi
+    jq_exec -n --argjson rules "$cur_rules" '{ route: { rules: $rules } }' > "$rt_tmp"
+  else
+    if [ "$(printf '%s' "$cur_rules" | jq_exec 'length')" -eq 0 ]; then
+      jq_exec -n --arg f "$target_tag" '{ route: { final: $f } }' > "$rt_tmp"
+    else
+      jq_exec -n --arg f "$target_tag" --argjson rules "$cur_rules" '{ route: { final: $f, rules: $rules } }' > "$rt_tmp"
+    fi
+  fi
+  printf '%s' "$rt_tmp"
+}
+
+# 非交互安装时根据 RELAY_URI / RELAY_MODE / RELAY_DOMAINS 自动应用中转配置
+relay_apply_noninteractive() {
+  [ -z "$RELAY_URI" ] && return 0
+  mkdir -p "$TEMP_DIR"
+  local tag="${RELAY_TAG:-relay-default}"
+  local ob_json
+  if ! ob_json=$(relay_parse_uri "$RELAY_URI" "$tag"); then
+    warning "\n $(text 220) \n"
+    return 1
+  fi
+  local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
+  local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+  relay_prepare_upsert_outbound "$ob_json" "$ob_tmp"
+
+  local rt_arg="__KEEP__"
+  if [ -n "$RELAY_DOMAINS" ]; then
+    local dom_arr
+    dom_arr=$(printf '%s' "$RELAY_DOMAINS" | tr '，' ',' | jq_exec -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+    if [ "${RELAY_MODE,,}" = "global" ]; then
+      jq_exec -n --arg f "$tag" --argjson d "$dom_arr" '{ route: { final: $f, rules: [{ domain_suffix: $d, outbound: $f }] } }' > "$rt_tmp"
+    else
+      jq_exec -n --arg t "$tag" --argjson d "$dom_arr" '{ route: { rules: [{ domain_suffix: $d, outbound: $t }] } }' > "$rt_tmp"
+    fi
+    rt_arg="$rt_tmp"
+  elif [ "${RELAY_MODE,,}" != "none" ]; then
+    rt_arg=$(relay_prepare_set_final "$tag" "$rt_tmp")
+  fi
+
+  relay_commit_files "$ob_tmp" "$rt_arg" "norestart"
+  rm -f "$ob_tmp" "$rt_tmp"
+}
+
+# 交互式选择目标出口（含所有已添加的落地机 + 可选 direct）
+# 用法: relay_pick_outbound [include_direct] -> 结果写入全局变量 RELAY_PICKED_TAG
+relay_pick_outbound() {
+  local include_direct="${1:-0}"
+  RELAY_PICKED_TAG=""
+  local tags=() labels=()
+  if [ -s "$RELAY_OUTBOUND_FILE" ]; then
+    while IFS=$'\t' read -r t tp srv prt; do
+      [ -z "$t" ] && continue
+      tags+=("$t")
+      labels+=("${t}  (${tp} -> ${srv}:${prt})")
+    done < <(jq_exec -r '.outbounds[]? | [.tag, .type, (.server // ""), ((.server_port // (.server_ports // [] | join(","))) | tostring)] | @tsv' "$RELAY_OUTBOUND_FILE" 2>/dev/null)
+  fi
+  if [ "$include_direct" = "1" ]; then
+    tags+=("direct")
+    labels+=("direct  ($(text 208))")
+  fi
+  if [ "${#tags[@]}" -eq 0 ]; then
+    warning "\n $(text 224) \n"
+    return 1
+  fi
+  hint "\n $(text 225)"
+  local i
+  for i in "${!tags[@]}"; do
+    hint " $((i+1)). ${labels[i]}"
+  done
+  local pick=""
+  reading "\n $(text 24) " pick
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || [ "$pick" -lt 1 ] || [ "$pick" -gt "${#tags[@]}" ]; then
+    return 1
+  fi
+  RELAY_PICKED_TAG="${tags[$((pick-1))]}"
+  return 0
+}
+
+# 中转 / 落地出口交互式管理主菜单 (sb -o)
+manage_relay() {
+  [ ! -d "${WORK_DIR}/conf" ] && error " $(text 107) "
+  mkdir -p "$TEMP_DIR"
+
+  while true; do
+    info "\n ==================== $(text 230) ===================="
+    hint " $(text 231)"
+    if [ -s "$RELAY_OUTBOUND_FILE" ] && [ "$(jq_exec -r '(.outbounds // []) | length' "$RELAY_OUTBOUND_FILE" 2>/dev/null || echo 0)" -gt 0 ]; then
+      jq_exec -r '.outbounds[]? | "   - \(.tag)  [\(.type)]  \(.server // ""):\(.server_port // ((.server_ports // []) | join(",")))"' "$RELAY_OUTBOUND_FILE" 2>/dev/null
+    else
+      echo "   $(text 234)"
+    fi
+
+    local cur_final="direct"
+    [ -s "$RELAY_ROUTE_FILE" ] && cur_final=$(jq_exec -r '.route.final // "direct"' "$RELAY_ROUTE_FILE" 2>/dev/null)
+    hint " $(text 232) ${cur_final}"
+
+    hint " $(text 233)"
+    if [ -s "$RELAY_ROUTE_FILE" ] && [ "$(jq_exec -r '(.route.rules // []) | length' "$RELAY_ROUTE_FILE" 2>/dev/null || echo 0)" -gt 0 ]; then
+      jq_exec -r '.route.rules[]? |
+        if .inbound then "   - inbound \(.inbound | join(",")) -> \(.outbound)"
+        elif .domain_suffix then "   - domain_suffix \(.domain_suffix | join(",")) -> \(.outbound)"
+        else "   - \(tojson)" end' "$RELAY_ROUTE_FILE" 2>/dev/null
+    else
+      echo "   $(text 234)"
+    fi
+    info " ===============================================================\n"
+
+    hint " 1. $(text 211)"
+    hint " 2. $(text 212)"
+    hint " 3. $(text 213)"
+    hint " 4. $(text 214)"
+    hint " 5. $(text 215)"
+    hint " 6. $(text 216)"
+    hint " 7. $(text 217)"
+    hint " 0. $(text 35)\n"
+
+    local act=""
+    reading " $(text 24) " act
+    case "$act" in
+      1)
+        local raw_input=""
+        reading "\n $(text 218)\n " raw_input
+        [ -z "$raw_input" ] && continue
+        # 先预解析一次以提取 remark 作为默认标签建议
+        local test_json
+        if ! test_json=$(relay_parse_uri "$raw_input" "relay-tmp"); then
+          warning "\n $(text 220) \n"
+          continue
+        fi
+        local def_tag
+        def_tag=$(relay_suggest_tag "$(relay_extract_remark "$raw_input")")
+        local custom_tag=""
+        reading "\n $(text 219) ${def_tag}): " custom_tag
+        custom_tag=$(printf '%s' "$custom_tag" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        [ -z "$custom_tag" ] && custom_tag="$def_tag"
+        [[ "$custom_tag" =~ ^(direct|block|dns-out)$ ]] && custom_tag="relay-${custom_tag}"
+
+        local final_json
+        final_json=$(printf '%s' "$test_json" | jq_exec --arg t "$custom_tag" '.tag = $t')
+        local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
+        local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+        relay_prepare_upsert_outbound "$final_json" "$ob_tmp"
+
+        local rt_arg="__KEEP__"
+        local set_global=""
+        reading "\n $(text 221) " set_global
+        if [[ ! "${set_global^^}" =~ ^N ]]; then
+          rt_arg=$(relay_prepare_set_final "$custom_tag" "$rt_tmp")
+        fi
+        relay_commit_files "$ob_tmp" "$rt_arg"
+        rm -f "$ob_tmp" "$rt_tmp"
+        ;;
+
+      2)
+        if relay_pick_outbound 1; then
+          local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+          local rt_arg
+          rt_arg=$(relay_prepare_set_final "$RELAY_PICKED_TAG" "$rt_tmp")
+          relay_commit_files "__KEEP__" "$rt_arg"
+          rm -f "$rt_tmp"
+        fi
+        ;;
+
+      3)
+        local in_tags=() in_labels=()
+        local f
+        for f in ${WORK_DIR}/conf/*_inbounds.json; do
+          [ -s "$f" ] || continue
+          while IFS=$'\t' read -r itag itype iport; do
+            [ -z "$itag" ] && continue
+            in_tags+=("$itag")
+            in_labels+=("${itag}  [${itype} : ${iport}]")
+          done < <(jq_exec -r '.inbounds[]? | [.tag, .type, ((.listen_port // "") | tostring)] | @tsv' "$f" 2>/dev/null)
+        done
+        if [ "${#in_tags[@]}" -eq 0 ]; then
+          warning "\n $(text 235) \n"
+          continue
+        fi
+        hint "\n $(text 226)"
+        local i
+        for i in "${!in_tags[@]}"; do
+          hint " $((i+1)). ${in_labels[i]}"
+        done
+        local in_pick=""
+        reading "\n $(text 24) " in_pick
+        if ! [[ "$in_pick" =~ ^[0-9]+$ ]] || [ "$in_pick" -lt 1 ] || [ "$in_pick" -gt "${#in_tags[@]}" ]; then
+          continue
+        fi
+        local chosen_in="${in_tags[$((in_pick-1))]}"
+        if relay_pick_outbound 1; then
+          local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+          local base_rt='{"route":{"rules":[]}}'
+          [ -s "$RELAY_ROUTE_FILE" ] && base_rt=$(cat "$RELAY_ROUTE_FILE")
+          printf '%s' "$base_rt" | jq_exec --arg inb "$chosen_in" --arg outb "$RELAY_PICKED_TAG" '
+            .route.rules = (((.route.rules // []) | map(select((.inbound // []) != [$inb]))) + [{ inbound: [$inb], outbound: $outb }])
+          ' > "$rt_tmp"
+          relay_commit_files "__KEEP__" "$rt_tmp"
+          rm -f "$rt_tmp"
+        fi
+        ;;
+
+      4)
+        if ! relay_pick_outbound 1; then
+          continue
+        fi
+        local raw_domains=""
+        reading "\n $(text 227)\n " raw_domains
+        [ -z "$raw_domains" ] && continue
+        local dom_arr
+        dom_arr=$(printf '%s' "$raw_domains" | tr '，' ',' | jq_exec -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+        [ "$(printf '%s' "$dom_arr" | jq_exec 'length')" -eq 0 ] && continue
+        local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+        local base_rt='{"route":{"rules":[]}}'
+        [ -s "$RELAY_ROUTE_FILE" ] && base_rt=$(cat "$RELAY_ROUTE_FILE")
+        printf '%s' "$base_rt" | jq_exec --argjson d "$dom_arr" --arg outb "$RELAY_PICKED_TAG" '
+          .route.rules = ((.route.rules // []) + [{ domain_suffix: $d, outbound: $outb }])
+        ' > "$rt_tmp"
+        relay_commit_files "__KEEP__" "$rt_tmp"
+        rm -f "$rt_tmp"
+        ;;
+
+      5)
+        if relay_pick_outbound 0; then
+          local del_tag="$RELAY_PICKED_TAG"
+          local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
+          local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+          local ob_arg="__DELETE__" rt_arg="__KEEP__"
+
+          jq_exec --arg t "$del_tag" '.outbounds = ((.outbounds // []) | map(select(.tag != $t)))' "$RELAY_OUTBOUND_FILE" > "$ob_tmp"
+          if [ "$(jq_exec -r '.outbounds | length' "$ob_tmp" 2>/dev/null || echo 0)" -gt 0 ]; then
+            ob_arg="$ob_tmp"
+          fi
+
+          # 同步清理 09_relay_route.json 中引用了被删 tag 的 final 和 rules，避免 sing-box check 报错
+          if [ -s "$RELAY_ROUTE_FILE" ]; then
+            jq_exec --arg t "$del_tag" '
+              .route.rules = ((.route.rules // []) | map(select(.outbound != $t)))
+              | if (.route.final // "") == $t then del(.route.final) else . end
+              | if ((.route.rules // []) | length) == 0 then del(.route.rules) else . end
+            ' "$RELAY_ROUTE_FILE" > "$rt_tmp"
+            if [ "$(jq_exec -r '(.route | keys | length)' "$rt_tmp" 2>/dev/null || echo 0)" -eq 0 ]; then
+              rt_arg="__DELETE__"
+            else
+              rt_arg="$rt_tmp"
+            fi
+          fi
+
+          if relay_commit_files "$ob_arg" "$rt_arg"; then
+            info " $(text 236) "
+          fi
+          rm -f "$ob_tmp" "$rt_tmp"
+        fi
+        ;;
+
+      6)
+        local del_all=""
+        reading "\n $(text 228) " del_all
+        local ob_arg="__KEEP__"
+        [[ "${del_all^^}" =~ ^Y ]] && ob_arg="__DELETE__"
+        if relay_commit_files "$ob_arg" "__DELETE__"; then
+          info " $(text 229) "
+        fi
+        ;;
+
+      7)
+        hint "\n --- 08_relay_outbound.json ---"
+        [ -s "$RELAY_OUTBOUND_FILE" ] && jq_exec '.' "$RELAY_OUTBOUND_FILE" || echo " ($(text 234))"
+        hint "\n --- 09_relay_route.json ---"
+        [ -s "$RELAY_ROUTE_FILE" ] && jq_exec '.' "$RELAY_ROUTE_FILE" || echo " ($(text 234))"
+        echo ""
+        ;;
+
+      0|"")
+        break
+        ;;
+    esac
+  done
+}
+
 # 更换优选域名 / reality SNI / 节点名 / UUID
 change_config() {
   [ ! -d "${WORK_DIR}" ] && error " $(text 107) "
@@ -771,6 +1675,9 @@ change_config() {
   # 指定网络出口
   local BIND_IFACE_NOW=$(awk -F '"' '/"bind_interface"[[:space:]]*:[[:space:]]*"/{print $4}' "${WORK_DIR}/conf/01_outbounds.json" 2>/dev/null)
   MENU_IDX+=(67) && MENU_KEY+=(bindinterface) && MENU_VAL+=("${BIND_IFACE_NOW:-default}")
+
+  # 中转 / 落地出口管理
+  MENU_IDX+=(207) && MENU_KEY+=(relay) && MENU_VAL+=("$(relay_status_summary)")
 
   # 订阅开关（基于 nginx.conf 文件内容检测）
   local SUB_ENABLED=0
@@ -880,6 +1787,9 @@ change_config() {
     return
   elif [ "$KEY" = "ports" ]; then
     change_port_mode
+    return
+  elif [ "$KEY" = "relay" ]; then
+    manage_relay
     return
   elif [ "$KEY" = "hy2bw" ]; then
     # 修改 Hysteria2 带宽
@@ -5140,6 +6050,7 @@ install_sing-box() {
   echo "${L^^}" > ${WORK_DIR}/language
   cp -f "$TEMP_DIR/sing-box" "$TEMP_DIR/jq" "${WORK_DIR}"
   [ -x "$TEMP_DIR/qrencode" ] && cp -f "$TEMP_DIR/qrencode" "${WORK_DIR}"
+  [ -n "$RELAY_URI" ] && relay_apply_noninteractive
 
   # 生成 Argo systemd 配置文件，并复制 cloudflared 可执行二进制文件
   [ -x "$TEMP_DIR/cloudflared" ] && cp -f "$TEMP_DIR/cloudflared" "${WORK_DIR}"
@@ -6567,9 +7478,10 @@ menu_setting() {
     OPTION[7]="7 .  $(text 32)"
     OPTION[8]="8 .  $(text 62)"
     OPTION[9]="9 .  $(text 33)"
-    OPTION[10]="10.  $(text 59)"
-    OPTION[11]="11.  $(text 69)"
-    OPTION[12]="12.  $(text 76)"
+    OPTION[10]="10.  $(text 206)"
+    OPTION[11]="11.  $(text 59)"
+    OPTION[12]="12.  $(text 69)"
+    OPTION[13]="13.  $(text 76)"
 
     ACTION[1]() { export_list; exit 0; }
 
@@ -6602,9 +7514,10 @@ menu_setting() {
     ACTION[7]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master/tcpx.sh); exit; }
     ACTION[8]() { change_protocols; exit; }
     ACTION[9]() { uninstall; exit; }
-    ACTION[10]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/argox/main/argox.sh) -$L; exit; }
-    ACTION[11]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/sba/main/sba.sh) -$L; exit; }
-    ACTION[12]() { bash <(wget --no-check-certificate -qO- https://tcp.hy2.sh/); exit; }
+    ACTION[10]() { manage_relay; exit; }
+    ACTION[11]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/argox/main/argox.sh) -$L; exit; }
+    ACTION[12]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/sba/main/sba.sh) -$L; exit; }
+    ACTION[13]() { bash <(wget --no-check-certificate -qO- https://tcp.hy2.sh/); exit; }
   else
     OPTION[1]="1.  $(text 115)"
     OPTION[2]="2.  $(text 34) + Argo + $(text 80) $(text 89)"
@@ -6859,6 +7772,9 @@ while [ $idx -lt ${#ORIG_ARGS[@]} ]; do
     -R )
       change_protocols; exit 0
       ;;
+    -O )
+      manage_relay; exit 0
+      ;;
     --LANGUAGE )
       [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
       [[ "${OPT_VAL^^}" =~ ^C ]] && LANGUAGE=C || LANGUAGE=E
@@ -6940,6 +7856,22 @@ while [ $idx -lt ${#ORIG_ARGS[@]} ]; do
     --REALITY_PRIVATE )
       [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
       REALITY_PRIVATE="$OPT_VAL"
+      ;;
+    --RELAY_URI )
+      [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
+      RELAY_URI="$OPT_VAL"
+      ;;
+    --RELAY_MODE )
+      [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
+      RELAY_MODE="$OPT_VAL"
+      ;;
+    --RELAY_DOMAINS )
+      [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
+      RELAY_DOMAINS="$OPT_VAL"
+      ;;
+    --RELAY_TAG )
+      [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
+      RELAY_TAG="$OPT_VAL"
       ;;
   esac
   ((idx++)) || true
