@@ -484,6 +484,16 @@ E[235]="No installed inbounds found."
 C[235]="未检测到已安装的入站配置。"
 E[236]="Outbound deleted."
 C[236]="已删除该落地机出口。"
+E[237]="Route by Geosite rule-set (DMM / AI / Netflix / custom)"
+C[237]="按 Geosite 规则集分流 (预设 DMM / AI / Netflix 或自定义)"
+E[238]="Select Geosite preset or custom input:"
+C[238]="请选择 Geosite 预设或自定义输入:"
+E[239]="AI international bundle (ChatGPT / Claude / Gemini / Grok, etc.)"
+C[239]="AI 国际全集 (ChatGPT / Claude / Gemini / Grok 等)"
+E[240]="Custom input (e.g. dmm,ai,openai,bahamut,abema)"
+C[240]="自定义输入 (例如 dmm,ai,openai,bahamut,abema)"
+E[241]="Enter geosite names separated by commas (e.g. dmm,ai or geosite:dmm):"
+C[241]="请输入 geosite 名称，多个用英文逗号分隔 (例如 dmm,ai 或 geosite:dmm):"
 
 # 自定义字体彩色，read 函数
 warning() { echo -e "\033[31m\033[01m$*\033[0m"; }  # 红色
@@ -1344,30 +1354,72 @@ relay_prepare_upsert_outbound() {
   fi
 }
 
-# 更新 09_relay_route.json 的 final 字段到临时文件（若 final=direct 且无 rules 则返回 __DELETE__）
+# 更新 09_relay_route.json 的 final 字段到临时文件（保留 rules 与 rule_set；若 final=direct 且无 rules 则返回 __DELETE__）
 relay_prepare_set_final() {
   local target_tag="$1" rt_tmp="$2"
-  local cur_rules='[]'
-  if [ -s "$RELAY_ROUTE_FILE" ]; then
-    cur_rules=$(jq_exec -c '.route.rules // []' "$RELAY_ROUTE_FILE" 2>/dev/null || echo '[]')
-  fi
+  local base_rt='{"route":{}}'
+  [ -s "$RELAY_ROUTE_FILE" ] && base_rt=$(cat "$RELAY_ROUTE_FILE")
   if [ "$target_tag" = "direct" ] || [ -z "$target_tag" ]; then
-    if [ "$(printf '%s' "$cur_rules" | jq_exec 'length')" -eq 0 ]; then
+    printf '%s' "$base_rt" | jq_exec '
+      del(.route.final)
+      | if ((.route.rules // []) | length) == 0 then del(.route.rules) | del(.route.rule_set) else . end
+    ' > "$rt_tmp"
+    if [ "$(jq_exec -r '(.route | keys | length)' "$rt_tmp" 2>/dev/null || echo 0)" -eq 0 ]; then
       printf '__DELETE__'
       return 0
     fi
-    jq_exec -n --argjson rules "$cur_rules" '{ route: { rules: $rules } }' > "$rt_tmp"
   else
-    if [ "$(printf '%s' "$cur_rules" | jq_exec 'length')" -eq 0 ]; then
-      jq_exec -n --arg f "$target_tag" '{ route: { final: $f } }' > "$rt_tmp"
-    else
-      jq_exec -n --arg f "$target_tag" --argjson rules "$cur_rules" '{ route: { final: $f, rules: $rules } }' > "$rt_tmp"
-    fi
+    printf '%s' "$base_rt" | jq_exec --arg f "$target_tag" '.route.final = $f' > "$rt_tmp"
   fi
   printf '%s' "$rt_tmp"
 }
 
-# 非交互安装时根据 RELAY_URI / RELAY_MODE / RELAY_DOMAINS 自动应用中转配置
+# 将 geosite 列表（如 "dmm,ai" 或 "geosite:dmm"）写入 09_relay_route.json 的 rule_set 与 rules（远程 .srs 自动适配 GH_PROXY）
+relay_prepare_add_geosites() {
+  local raw_csv="$1" target_tag="$2" rt_tmp="$3"
+  local base_rt='{"route":{}}'
+  [ -s "$RELAY_ROUTE_FILE" ] && base_rt=$(cat "$RELAY_ROUTE_FILE")
+  [ -s "$rt_tmp" ] && base_rt=$(cat "$rt_tmp")
+
+  local gh_prefix="${GH_PROXY:-}"
+  local norm_csv
+  norm_csv=$(printf '%s' "$raw_csv" | tr '，' ',')
+  local IFS=',' item name rs_tag rs_url added=0
+  local cur_json="$base_rt"
+  for item in $norm_csv; do
+    name=$(printf '%s' "$item" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    name=$(relay_lower "$name")
+    name="${name#geosite:}"
+    name="${name#geosite-}"
+    [ -z "$name" ] && continue
+    # 常用简称自动映射到 SagerNet/sing-geosite 官方 rule-set 文件名
+    [ "$name" = "ai" ] && name="category-ai-!cn"
+    rs_tag="geosite-${name}"
+    rs_url="${gh_prefix}https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/${rs_tag}.srs"
+    cur_json=$(printf '%s' "$cur_json" | jq_exec \
+      --arg tag "$rs_tag" \
+      --arg url "$rs_url" \
+      --arg outb "$target_tag" '
+      .route.rule_set = (((.route.rule_set // []) | map(select(.tag != $tag))) + [{
+        tag: $tag,
+        type: "remote",
+        format: "binary",
+        url: $url,
+        update_interval: "1d"
+      }])
+      | .route.rules = (((.route.rules // []) | map(select((.rule_set // []) != [$tag]))) + [{
+        rule_set: [$tag],
+        outbound: $outb
+      }])
+    ')
+    added=1
+  done
+  [ "$added" -eq 0 ] && return 1
+  printf '%s\n' "$cur_json" > "$rt_tmp"
+  return 0
+}
+
+# 非交互安装时根据 RELAY_URI / RELAY_MODE / RELAY_GEOSITES / RELAY_DOMAINS 自动应用中转配置
 relay_apply_noninteractive() {
   [ -z "$RELAY_URI" ] && return 0
   mkdir -p "$TEMP_DIR"
@@ -1379,20 +1431,39 @@ relay_apply_noninteractive() {
   fi
   local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
   local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+  rm -f "$rt_tmp"
   relay_prepare_upsert_outbound "$ob_json" "$ob_tmp"
 
   local rt_arg="__KEEP__"
-  if [ -n "$RELAY_DOMAINS" ]; then
-    local dom_arr
-    dom_arr=$(printf '%s' "$RELAY_DOMAINS" | tr '，' ',' | jq_exec -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
-    if [ "${RELAY_MODE,,}" = "global" ]; then
-      jq_exec -n --arg f "$tag" --argjson d "$dom_arr" '{ route: { final: $f, rules: [{ domain_suffix: $d, outbound: $f }] } }' > "$rt_tmp"
-    else
-      jq_exec -n --arg t "$tag" --argjson d "$dom_arr" '{ route: { rules: [{ domain_suffix: $d, outbound: $t }] } }' > "$rt_tmp"
+  local mode_l
+  mode_l=$(relay_lower "${RELAY_MODE:-}")
+
+  if [ -n "$RELAY_GEOSITES" ]; then
+    if relay_prepare_add_geosites "$RELAY_GEOSITES" "$tag" "$rt_tmp"; then
+      rt_arg="$rt_tmp"
     fi
-    rt_arg="$rt_tmp"
-  elif [ "${RELAY_MODE,,}" != "none" ]; then
-    rt_arg=$(relay_prepare_set_final "$tag" "$rt_tmp")
+  fi
+
+  if [ -n "$RELAY_DOMAINS" ]; then
+    local dom_arr base_rt='{"route":{}}'
+    [ -s "$rt_tmp" ] && base_rt=$(cat "$rt_tmp")
+    dom_arr=$(printf '%s' "$RELAY_DOMAINS" | tr '，' ',' | jq_exec -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+    if [ "$(printf '%s' "$dom_arr" | jq_exec 'length')" -gt 0 ]; then
+      printf '%s' "$base_rt" | jq_exec --arg t "$tag" --argjson d "$dom_arr" '
+        .route.rules = ((.route.rules // []) + [{ domain_suffix: $d, outbound: $t }])
+      ' > "$rt_tmp"
+      rt_arg="$rt_tmp"
+    fi
+  fi
+
+  if [ "$mode_l" = "global" ] || { [ -z "$RELAY_GEOSITES" ] && [ -z "$RELAY_DOMAINS" ] && [ "$mode_l" != "none" ]; }; then
+    if [ -s "$rt_tmp" ]; then
+      local tmp2="${rt_tmp}.2"
+      jq_exec --arg f "$tag" '.route.final = $f' "$rt_tmp" > "$tmp2" && mv "$tmp2" "$rt_tmp"
+      rt_arg="$rt_tmp"
+    else
+      rt_arg=$(relay_prepare_set_final "$tag" "$rt_tmp")
+    fi
   fi
 
   relay_commit_files "$ob_tmp" "$rt_arg" "norestart"
@@ -1455,7 +1526,8 @@ manage_relay() {
     hint " $(text 233)"
     if [ -s "$RELAY_ROUTE_FILE" ] && [ "$(jq_exec -r '(.route.rules // []) | length' "$RELAY_ROUTE_FILE" 2>/dev/null || echo 0)" -gt 0 ]; then
       jq_exec -r '.route.rules[]? |
-        if .inbound then "   - inbound \(.inbound | join(",")) -> \(.outbound)"
+        if .rule_set then "   - rule_set \(.rule_set | join(",")) -> \(.outbound)"
+        elif .inbound then "   - inbound \(.inbound | join(",")) -> \(.outbound)"
         elif .domain_suffix then "   - domain_suffix \(.domain_suffix | join(",")) -> \(.outbound)"
         else "   - \(tojson)" end' "$RELAY_ROUTE_FILE" 2>/dev/null
     else
@@ -1465,11 +1537,12 @@ manage_relay() {
 
     hint " 1. $(text 211)"
     hint " 2. $(text 212)"
-    hint " 3. $(text 213)"
+    hint " 3. $(text 237)"
     hint " 4. $(text 214)"
-    hint " 5. $(text 215)"
-    hint " 6. $(text 216)"
-    hint " 7. $(text 217)"
+    hint " 5. $(text 213)"
+    hint " 6. $(text 215)"
+    hint " 7. $(text 216)"
+    hint " 8. $(text 217)"
     hint " 0. $(text 35)\n"
 
     local act=""
@@ -1520,6 +1593,57 @@ manage_relay() {
         ;;
 
       3)
+        if ! relay_pick_outbound 1; then
+          continue
+        fi
+        hint "\n $(text 238)"
+        hint " 1. DMM (geosite-dmm)"
+        hint " 2. $(text 239) (geosite-category-ai-!cn)"
+        hint " 3. Netflix (geosite-netflix)"
+        hint " 4. Disney+ (geosite-disney)"
+        hint " 5. TikTok (geosite-tiktok)"
+        hint " 6. $(text 240)"
+        local gs_pick="" gs_csv=""
+        reading "\n $(text 24) " gs_pick
+        case "$gs_pick" in
+          1) gs_csv="dmm" ;;
+          2) gs_csv="ai" ;;
+          3) gs_csv="netflix" ;;
+          4) gs_csv="disney" ;;
+          5) gs_csv="tiktok" ;;
+          6) reading "\n $(text 241)\n " gs_csv ;;
+          *) continue ;;
+        esac
+        [ -z "$gs_csv" ] && continue
+        local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+        rm -f "$rt_tmp"
+        if relay_prepare_add_geosites "$gs_csv" "$RELAY_PICKED_TAG" "$rt_tmp"; then
+          relay_commit_files "__KEEP__" "$rt_tmp"
+        fi
+        rm -f "$rt_tmp"
+        ;;
+
+      4)
+        if ! relay_pick_outbound 1; then
+          continue
+        fi
+        local raw_domains=""
+        reading "\n $(text 227)\n " raw_domains
+        [ -z "$raw_domains" ] && continue
+        local dom_arr
+        dom_arr=$(printf '%s' "$raw_domains" | tr '，' ',' | jq_exec -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+        [ "$(printf '%s' "$dom_arr" | jq_exec 'length')" -eq 0 ] && continue
+        local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+        local base_rt='{"route":{"rules":[]}}'
+        [ -s "$RELAY_ROUTE_FILE" ] && base_rt=$(cat "$RELAY_ROUTE_FILE")
+        printf '%s' "$base_rt" | jq_exec --argjson d "$dom_arr" --arg outb "$RELAY_PICKED_TAG" '
+          .route.rules = ((.route.rules // []) + [{ domain_suffix: $d, outbound: $outb }])
+        ' > "$rt_tmp"
+        relay_commit_files "__KEEP__" "$rt_tmp"
+        rm -f "$rt_tmp"
+        ;;
+
+      5)
         local in_tags=() in_labels=()
         local f
         for f in ${WORK_DIR}/conf/*_inbounds.json; do
@@ -1557,27 +1681,7 @@ manage_relay() {
         fi
         ;;
 
-      4)
-        if ! relay_pick_outbound 1; then
-          continue
-        fi
-        local raw_domains=""
-        reading "\n $(text 227)\n " raw_domains
-        [ -z "$raw_domains" ] && continue
-        local dom_arr
-        dom_arr=$(printf '%s' "$raw_domains" | tr '，' ',' | jq_exec -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
-        [ "$(printf '%s' "$dom_arr" | jq_exec 'length')" -eq 0 ] && continue
-        local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
-        local base_rt='{"route":{"rules":[]}}'
-        [ -s "$RELAY_ROUTE_FILE" ] && base_rt=$(cat "$RELAY_ROUTE_FILE")
-        printf '%s' "$base_rt" | jq_exec --argjson d "$dom_arr" --arg outb "$RELAY_PICKED_TAG" '
-          .route.rules = ((.route.rules // []) + [{ domain_suffix: $d, outbound: $outb }])
-        ' > "$rt_tmp"
-        relay_commit_files "__KEEP__" "$rt_tmp"
-        rm -f "$rt_tmp"
-        ;;
-
-      5)
+      6)
         if relay_pick_outbound 0; then
           local del_tag="$RELAY_PICKED_TAG"
           local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
@@ -1589,11 +1693,14 @@ manage_relay() {
             ob_arg="$ob_tmp"
           fi
 
-          # 同步清理 09_relay_route.json 中引用了被删 tag 的 final 和 rules，避免 sing-box check 报错
+          # 同步清理 09_relay_route.json 中引用了被删 tag 的 final、rules 及不再使用的 rule_set
           if [ -s "$RELAY_ROUTE_FILE" ]; then
             jq_exec --arg t "$del_tag" '
               .route.rules = ((.route.rules // []) | map(select(.outbound != $t)))
               | if (.route.final // "") == $t then del(.route.final) else . end
+              | ([.route.rules[]?.rule_set[]?] | unique) as $used_rs
+              | if .route.rule_set then .route.rule_set = (.route.rule_set | map(select(.tag as $tg | $used_rs | index($tg)))) else . end
+              | if ((.route.rule_set // []) | length) == 0 then del(.route.rule_set) else . end
               | if ((.route.rules // []) | length) == 0 then del(.route.rules) else . end
             ' "$RELAY_ROUTE_FILE" > "$rt_tmp"
             if [ "$(jq_exec -r '(.route | keys | length)' "$rt_tmp" 2>/dev/null || echo 0)" -eq 0 ]; then
@@ -1610,7 +1717,7 @@ manage_relay() {
         fi
         ;;
 
-      6)
+      7)
         local del_all=""
         reading "\n $(text 228) " del_all
         local ob_arg="__KEEP__"
@@ -1620,7 +1727,7 @@ manage_relay() {
         fi
         ;;
 
-      7)
+      8)
         hint "\n --- 08_relay_outbound.json ---"
         [ -s "$RELAY_OUTBOUND_FILE" ] && jq_exec '.' "$RELAY_OUTBOUND_FILE" || echo " ($(text 234))"
         hint "\n --- 09_relay_route.json ---"
@@ -7868,6 +7975,10 @@ while [ $idx -lt ${#ORIG_ARGS[@]} ]; do
     --RELAY_DOMAINS )
       [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
       RELAY_DOMAINS="$OPT_VAL"
+      ;;
+    --RELAY_GEOSITES )
+      [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
+      RELAY_GEOSITES="$OPT_VAL"
       ;;
     --RELAY_TAG )
       [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
