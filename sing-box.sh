@@ -3324,16 +3324,13 @@ check_brutal() {
 check_install() {
   local PS_LIST=$(ps -eo pid,args | grep -E "$WORK_DIR.*([s]ing-box|[c]loudflared|[n]ginx)" | sed 's/^[ ]\+//g')
 
-  [[ "$IS_SUB" = 'is_sub' || -s ${WORK_DIR}/subscribe/qr ]] && IS_SUB=is_sub || IS_SUB=no_sub
-  # 动态订阅状态以 nginx.conf 中的 FastCGI location 为唯一事实来源。
-  # 仅在未显式设置时补检测：change_config 的开关 handler 会先显式赋值，且此时
-  # nginx.conf 可能尚未刷新，不能覆盖其显式意图。
+  # 订阅/动态订阅状态仅在未显式设置时探测，nginx.conf 是唯一事实来源。
+  if [ -z "$IS_SUB" ]; then
+    [ -s "${WORK_DIR}/nginx.conf" ] && grep -qE 'location ~ \^/[^/]+/auto \{' "${WORK_DIR}/nginx.conf" 2>/dev/null && IS_SUB=is_sub || IS_SUB=no_sub
+  fi
+  # 动态订阅依赖普通订阅；nginx.conf 可能尚未刷新，不能覆盖显式意图。
   if [ -z "$IS_DYNAMIC_SUB" ]; then
-    if [ "$IS_SUB" = 'is_sub' ] && grep -qE 'fastcgi_pass.*fcgiwrap\.sock' "${WORK_DIR}/nginx.conf" 2>/dev/null; then
-      IS_DYNAMIC_SUB=is_dynamic_sub
-    else
-      IS_DYNAMIC_SUB=no_dynamic_sub
-    fi
+    [ "$IS_SUB" = 'is_sub' ] && [ -s "${WORK_DIR}/nginx.conf" ] && grep -qE 'fastcgi_pass.*fcgiwrap\.sock' "${WORK_DIR}/nginx.conf" 2>/dev/null && IS_DYNAMIC_SUB=is_dynamic_sub || IS_DYNAMIC_SUB=no_dynamic_sub
   fi
   if ls ${WORK_DIR}/conf/*${NODE_TAG[1]}_inbounds.json >/dev/null 2>&1; then
     check_port_hopping_nat
@@ -3841,6 +3838,14 @@ check_port_hopping_nat() {
 
 # 检测 IPv4 IPv6 信息
 check_system_ip() {
+  # 会话内缓存：命中则直接读缓存赋值，跳过重复外部 API 探测
+  local CACHE_FILE="$TEMP_DIR/sb_system_ip_cache"
+  if [ -s "$CACHE_FILE" ]; then
+    WAN4='' WAN6='' COUNTRY4='' COUNTRY6='' EMOJI4='' EMOJI6='' ASNORG4='' ASNORG6=''
+    source "$CACHE_FILE" 2>/dev/null
+    return 0
+  fi
+
   [ "$L" = 'C' ] && local IS_CHINESE='?lang=zh-CN'
   local DEFAULT_LOCAL_INTERFACE4=$(ip -4 route show default | awk '/default/ {for (i=0; i<NF; i++) if ($i=="dev") {print $(i+1); exit}}')
   # 无对应协议族默认路由时跳过探测，避免 wget 空等满超时；两族并行，族内主备串行
@@ -3892,6 +3897,19 @@ check_system_ip() {
   EMOJI6=$(awk -F '"' '/"emoji"/{print $4}' <<< "$IP6_JSON") &&
   ASNORG6=$(awk -F '"' '/"isp"/{print $4}' <<< "$IP6_JSON") &&
   rm -f $TEMP_DIR/ip6.json
+
+  # 写入会话缓存，供 dynamic_meta_write 等后续调用复用（printf %q 避免特殊字符注入）
+  mkdir -p "$TEMP_DIR" 2>/dev/null || true
+  {
+    printf 'WAN4=%q\n' "${WAN4:-}"
+    printf 'WAN6=%q\n' "${WAN6:-}"
+    printf 'COUNTRY4=%q\n' "${COUNTRY4:-}"
+    printf 'COUNTRY6=%q\n' "${COUNTRY6:-}"
+    printf 'EMOJI4=%q\n' "${EMOJI4:-}"
+    printf 'EMOJI6=%q\n' "${EMOJI6:-}"
+    printf 'ASNORG4=%q\n' "${ASNORG4:-}"
+    printf 'ASNORG6=%q\n' "${ASNORG6:-}"
+  } > "$CACHE_FILE" 2>/dev/null || true
 }
 
 # 输入起始 port 函数
@@ -6777,9 +6795,15 @@ export_list() {
     SUB_OUT_DIR="$DYNAMIC_TEMPLATE_DIR"
     SUB_TPL_SRC="$DYNAMIC_TEMPLATE_DIR/src"
     mkdir -p "$SUB_OUT_DIR" "$SUB_TPL_SRC"
-    # 模板源独立下载/复用，不依赖 TEMP_DIR，保证静态路径零副作用
+    # 模板源优先复用 check_install() 已下载到 TEMP_DIR 的文件，避免重复网络下载
+    wait 2>/dev/null
     for TPL_NAME in clash clash2 sing-box-template; do
-      [ -s "${SUB_TPL_SRC}/${TPL_NAME}" ] || gh_download "${SUB_TPL_SRC}/${TPL_NAME}" "${SUBSCRIBE_TEMPLATE}/$( [ "$TPL_NAME" = 'sing-box-template' ] && echo sing-box || echo $TPL_NAME )" 2>/dev/null || true
+      [ -s "${SUB_TPL_SRC}/${TPL_NAME}" ] && continue
+      if [ -s "${TEMP_DIR}/${TPL_NAME}" ]; then
+        cp "${TEMP_DIR}/${TPL_NAME}" "${SUB_TPL_SRC}/${TPL_NAME}"
+      else
+        gh_download "${SUB_TPL_SRC}/${TPL_NAME}" "${SUBSCRIBE_TEMPLATE}/$( [ "$TPL_NAME" = 'sing-box-template' ] && echo sing-box || echo $TPL_NAME )" 2>/dev/null || true
+      fi
     done
   else
     SUB_OUT_DIR="${WORK_DIR}/subscribe"
