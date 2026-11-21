@@ -494,6 +494,84 @@ E[240]="Custom input (e.g. dmm,ai,openai,bahamut,abema)"
 C[240]="自定义输入 (例如 dmm,ai,openai,bahamut,abema)"
 E[241]="Enter geosite names separated by commas (e.g. dmm,ai or geosite:dmm):"
 C[241]="请输入 geosite 名称，多个用英文逗号分隔 (例如 dmm,ai 或 geosite:dmm):"
+E[242]="Delete a single routing rule"
+C[242]="单条删除分流规则"
+E[243]="Test landing outbound connectivity & latency"
+C[243]="测试落地机连通性与延迟"
+E[244]="Create failover / auto-select group (urltest)"
+C[244]="创建故障自动切换组 (urltest，主落地断线自动切备用)"
+E[245]="Select rule number to delete:"
+C[245]="请选择要删除的规则序号:"
+E[246]="No custom routing rules to delete."
+C[246]="当前没有可删除的分流规则。"
+E[247]="Rule deleted."
+C[247]="已删除该条分流规则。"
+E[248]="clash_api is not available or sing-box is not running."
+C[248]="无法连接 clash_api，请确认 sing-box 正在运行。"
+E[249]="Testing landing outbounds via clash_api..."
+C[249]="正在通过 clash_api 测试各落地机延迟..."
+E[250]="Select 2 or more outbounds in priority order (comma-separated, e.g. 1,2):"
+C[250]="请按优先级顺序选择 2 个及以上出口，用逗号分隔 (例如 1,2):"
+E[251]="Group tag name (Enter for default:"
+C[251]="故障切换组标签名 (回车默认:"
+E[252]="Please select at least 2 valid outbounds."
+C[252]="请至少选择 2 个有效出口。"
+E[253]="Runtime monitor: connections / traffic / logs (sb -i)"
+C[253]="实时监控：连接 / 流量 / 日志排查 (sb -i)"
+E[254]="Backup & restore configuration (sb -m)"
+C[254]="配置一键备份与恢复迁移 (sb -m)"
+E[255]="DNS / Outbound IP strategy  (current: \${VAL_ITEM})"
+C[255]="出站 IP / DNS 策略  (当前: \${VAL_ITEM})"
+E[256]="Security anti-abuse rules  (current: \${VAL_ITEM})"
+C[256]="安全防滥用拦截  (当前: \${VAL_ITEM})"
+E[257]="Minimal landing server mode (SS-2022 / Reality only, no Nginx/Argo)"
+C[257]="极简落地机模式 (仅装轻量化协议，无 Nginx/Argo/订阅，省内存)"
+E[258]="Select DNS / Outbound IP strategy:"
+C[258]="请选择出站 IP / DNS 优先策略:"
+E[259]="DNS strategy updated and applied!"
+C[259]="出站 IP / DNS 策略已更新并生效!"
+E[260]="Security Anti-Abuse Rules (Private IP & BitTorrent Blocking)"
+C[260]="安全防滥用拦截设置 (私有 IP / BT 流量拦截)"
+E[261]="Toggle block private IP (ip_is_private -> reject)"
+C[261]="开关：拦截私有/内网 IP (防回环与内网扫描)"
+E[262]="Toggle block BitTorrent (protocol=bittorrent -> reject)"
+C[262]="开关：拦截 BitTorrent 协议 (防家宽/落地机收 DMCA 版权投诉)"
+E[263]="Security rules updated and applied!"
+C[263]="安全防滥用规则已更新并生效!"
+E[264]="ON"
+C[264]="开"
+E[265]="OFF"
+C[265]="关"
+E[266]="Real-Time Connections, Traffic & Logs"
+C[266]="实时连接、流量与日志排查"
+E[267]="Total Upload / Download:"
+C[267]="累计上传 / 下载流量:"
+E[268]="Active connections:"
+C[268]="当前活跃连接数:"
+E[269]="Refresh connections & traffic"
+C[269]="刷新实时连接与流量"
+E[270]="View last 50 lines of sing-box log"
+C[270]="查看 sing-box 最近 50 行日志"
+E[271]="Clear sing-box log file"
+C[271]="清空 sing-box 日志文件"
+E[272]="Log file cleared."
+C[272]="日志文件已清空。"
+E[273]="Configuration Backup & Restore"
+C[273]="配置一键备份与恢复迁移"
+E[274]="Export backup archive (.tar.gz)"
+C[274]="一键导出配置备份 (.tar.gz)"
+E[275]="Restore from backup archive (.tar.gz)"
+C[275]="从备份文件一键恢复配置 (.tar.gz)"
+E[276]="Backup created:"
+C[276]="备份已生成:"
+E[277]="Enter full path to backup .tar.gz file:"
+C[277]="请输入备份文件 (.tar.gz) 的完整路径:"
+E[278]="Backup file not found or invalid archive."
+C[278]="备份文件不存在或不是有效的 tar.gz 压缩包。"
+E[279]="Configuration restored and sing-box restarted! If migrated to a new server IP, run 'sb -d' to update Server IP."
+C[279]="配置已恢复并重启 sing-box！如果是迁移到新机器，可运行 sb -d 修改服务器 IP。"
+E[280]="Select lightweight protocol(s) for landing server:"
+C[280]="请选择落地机要安装的轻量协议:"
 
 # 自定义字体彩色，read 函数
 warning() { echo -e "\033[31m\033[01m$*\033[0m"; }  # 红色
@@ -1480,8 +1558,12 @@ relay_pick_outbound() {
     while IFS=$'\t' read -r t tp srv prt; do
       [ -z "$t" ] && continue
       tags+=("$t")
-      labels+=("${t}  (${tp} -> ${srv}:${prt})")
-    done < <(jq_exec -r '.outbounds[]? | [.tag, .type, (.server // ""), ((.server_port // (.server_ports // [] | join(","))) | tostring)] | @tsv' "$RELAY_OUTBOUND_FILE" 2>/dev/null)
+      if [ "$tp" = "urltest" ]; then
+        labels+=("${t}  (urltest -> ${srv})")
+      else
+        labels+=("${t}  (${tp} -> ${srv}:${prt})")
+      fi
+    done < <(jq_exec -r '.outbounds[]? | [.tag, .type, (if .type == "urltest" then ((.outbounds // []) | join(",")) else (.server // "") end), ((.server_port // (.server_ports // [] | join(","))) | tostring)] | @tsv' "$RELAY_OUTBOUND_FILE" 2>/dev/null)
   fi
   if [ "$include_direct" = "1" ]; then
     tags+=("direct")
@@ -1505,6 +1587,162 @@ relay_pick_outbound() {
   return 0
 }
 
+# 读取 04_experimental.json 中的 clash_api 监听地址并请求（兼容 curl / wget）
+clash_api_endpoint() {
+  [ -s "${WORK_DIR}/conf/04_experimental.json" ] || return 1
+  local ec
+  ec=$(jq_exec -r '.experimental.clash_api.external_controller // ""' "${WORK_DIR}/conf/04_experimental.json" 2>/dev/null)
+  [ -n "$ec" ] || return 1
+  printf '%s' "$ec"
+}
+
+clash_api_get() {
+  local path="$1" timeout_s="${2:-6}"
+  local ec
+  ec=$(clash_api_endpoint) || return 1
+  local url="http://${ec}${path}"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time "$timeout_s" "$url" 2>/dev/null
+  else
+    wget -qO- -T "$timeout_s" "$url" 2>/dev/null
+  fi
+}
+
+# 单条删除 09_relay_route.json 中的分流规则（同步清理孤立 rule_set）
+relay_delete_single_rule() {
+  local rule_cnt=0
+  [ -s "$RELAY_ROUTE_FILE" ] && rule_cnt=$(jq_exec -r '(.route.rules // []) | length' "$RELAY_ROUTE_FILE" 2>/dev/null || echo 0)
+  if [ "${rule_cnt:-0}" -eq 0 ]; then
+    warning "\n $(text 246) \n"
+    return 1
+  fi
+  hint "\n $(text 245)"
+  jq_exec -r '.route.rules | to_entries[] |
+    " \(.key + 1). " + (
+      if .value.rule_set then "rule_set \(.value.rule_set | join(",")) -> \(.value.outbound)"
+      elif .value.inbound then "inbound \(.value.inbound | join(",")) -> \(.value.outbound)"
+      elif .value.domain_suffix then "domain_suffix \(.value.domain_suffix | join(",")) -> \(.value.outbound)"
+      else (.value | tojson) end
+    )' "$RELAY_ROUTE_FILE" 2>/dev/null
+  local pick=""
+  reading "\n $(text 24) " pick
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || [ "$pick" -lt 1 ] || [ "$pick" -gt "$rule_cnt" ]; then
+    return 1
+  fi
+  local del_idx=$((pick - 1))
+  local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
+  jq_exec --argjson idx "$del_idx" '
+    .route.rules = ((.route.rules // []) | del(.[$idx]))
+    | ([.route.rules[]?.rule_set[]?] | unique) as $used_rs
+    | if .route.rule_set then .route.rule_set = (.route.rule_set | map(select(.tag as $tg | $used_rs | index($tg)))) else . end
+    | if ((.route.rule_set // []) | length) == 0 then del(.route.rule_set) else . end
+    | if ((.route.rules // []) | length) == 0 then del(.route.rules) else . end
+  ' "$RELAY_ROUTE_FILE" > "$rt_tmp"
+  local rt_arg="$rt_tmp"
+  [ "$(jq_exec -r '(.route | keys | length)' "$rt_tmp" 2>/dev/null || echo 0)" -eq 0 ] && rt_arg="__DELETE__"
+  if relay_commit_files "__KEEP__" "$rt_arg"; then
+    info " $(text 247) "
+  fi
+  rm -f "$rt_tmp"
+}
+
+# 通过 clash_api 测试所有已添加落地机出口的连通性与延迟
+relay_test_outbounds() {
+  if [ ! -s "$RELAY_OUTBOUND_FILE" ] || [ "$(jq_exec -r '(.outbounds // []) | length' "$RELAY_OUTBOUND_FILE" 2>/dev/null || echo 0)" -eq 0 ]; then
+    warning "\n $(text 224) \n"
+    return 1
+  fi
+  if ! clash_api_get "/version" 3 >/dev/null 2>&1; then
+    warning "\n $(text 248) \n"
+    return 1
+  fi
+  info "\n $(text 249)"
+  local tag enc_tag resp delay
+  while IFS= read -r tag; do
+    [ -z "$tag" ] && continue
+    enc_tag=$(printf '%s' "$tag" | jq_exec -sRr '@uri')
+    resp=$(clash_api_get "/proxies/${enc_tag}/delay?timeout=5000&url=https://www.gstatic.com/generate_204" 7 || true)
+    delay=$(printf '%s' "$resp" | jq_exec -r '.delay // empty' 2>/dev/null || true)
+    if [[ "$delay" =~ ^[0-9]+$ ]] && [ "$delay" -gt 0 ]; then
+      info "   - ${tag}  ->  ${delay} ms (OK)"
+    else
+      warning "   - ${tag}  ->  TIMEOUT / FAIL"
+    fi
+  done < <(jq_exec -r '.outbounds[]? | .tag' "$RELAY_OUTBOUND_FILE" 2>/dev/null)
+  echo ""
+}
+
+# 创建 sing-box 原生 urltest 故障自动切换组（主落地断线自动切备用/直连）
+relay_create_failover_group() {
+  local tags=() labels=()
+  if [ -s "$RELAY_OUTBOUND_FILE" ]; then
+    while IFS=$'\t' read -r t tp srv prt; do
+      [ -z "$t" ] && continue
+      [ "$tp" = "urltest" ] && continue
+      tags+=("$t")
+      labels+=("${t}  (${tp} -> ${srv}:${prt})")
+    done < <(jq_exec -r '.outbounds[]? | [.tag, .type, (.server // ""), ((.server_port // (.server_ports // [] | join(","))) | tostring)] | @tsv' "$RELAY_OUTBOUND_FILE" 2>/dev/null)
+  fi
+  if [ "${#tags[@]}" -eq 0 ]; then
+    warning "\n $(text 224) \n"
+    return 1
+  fi
+  tags+=("direct")
+  labels+=("direct  ($(text 208))")
+
+  hint "\n $(text 250)"
+  local i
+  for i in "${!tags[@]}"; do
+    hint " $((i+1)). ${labels[i]}"
+  done
+  local raw_picks=""
+  reading "\n $(text 24) " raw_picks
+  [ -z "$raw_picks" ] && return 1
+
+  local norm_picks
+  norm_picks=$(printf '%s' "$raw_picks" | tr '， ' ',,')
+  local selected=() IFS=',' p idx
+  for p in $norm_picks; do
+    p=$(printf '%s' "$p" | tr -cd '0-9')
+    [ -z "$p" ] && continue
+    if [ "$p" -ge 1 ] && [ "$p" -le "${#tags[@]}" ]; then
+      idx=$((p - 1))
+      local t="${tags[idx]}" dup=0 existing
+      for existing in "${selected[@]}"; do
+        [ "$existing" = "$t" ] && dup=1 && break
+      done
+      [ "$dup" -eq 0 ] && selected+=("$t")
+    fi
+  done
+  if [ "${#selected[@]}" -lt 2 ]; then
+    warning "\n $(text 252) \n"
+    return 1
+  fi
+
+  local def_tag="auto-relay"
+  local custom_tag=""
+  reading "\n $(text 251) ${def_tag}): " custom_tag
+  custom_tag=$(printf '%s' "$custom_tag" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  [ -z "$custom_tag" ] && custom_tag="$def_tag"
+  [[ "$custom_tag" =~ ^(direct|block|dns-out)$ ]] && custom_tag="auto-${custom_tag}"
+
+  local members_json ob_json
+  members_json=$(printf '%s\n' "${selected[@]}" | jq_exec -R . | jq_exec -s .)
+  ob_json=$(jq_exec -n --arg tag "$custom_tag" --argjson obs "$members_json" '{
+    type: "urltest",
+    tag: $tag,
+    outbounds: $obs,
+    url: "https://www.gstatic.com/generate_204",
+    interval: "3m",
+    tolerance: 100
+  }')
+
+  local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
+  relay_prepare_upsert_outbound "$ob_json" "$ob_tmp"
+  relay_commit_files "$ob_tmp" "__KEEP__"
+  rm -f "$ob_tmp"
+}
+
 # 中转 / 落地出口交互式管理主菜单 (sb -o)
 manage_relay() {
   [ ! -d "${WORK_DIR}/conf" ] && error " $(text 107) "
@@ -1514,7 +1752,9 @@ manage_relay() {
     info "\n ==================== $(text 230) ===================="
     hint " $(text 231)"
     if [ -s "$RELAY_OUTBOUND_FILE" ] && [ "$(jq_exec -r '(.outbounds // []) | length' "$RELAY_OUTBOUND_FILE" 2>/dev/null || echo 0)" -gt 0 ]; then
-      jq_exec -r '.outbounds[]? | "   - \(.tag)  [\(.type)]  \(.server // ""):\(.server_port // ((.server_ports // []) | join(",")))"' "$RELAY_OUTBOUND_FILE" 2>/dev/null
+      jq_exec -r '.outbounds[]? |
+        if .type == "urltest" then "   - \(.tag)  [urltest]  \((.outbounds // []) | join(" -> "))"
+        else "   - \(.tag)  [\(.type)]  \(.server // ""):\(.server_port // ((.server_ports // []) | join(",")))" end' "$RELAY_OUTBOUND_FILE" 2>/dev/null
     else
       echo "   $(text 234)"
     fi
@@ -1540,9 +1780,12 @@ manage_relay() {
     hint " 3. $(text 237)"
     hint " 4. $(text 214)"
     hint " 5. $(text 213)"
-    hint " 6. $(text 215)"
-    hint " 7. $(text 216)"
-    hint " 8. $(text 217)"
+    hint " 6. $(text 242)"
+    hint " 7. $(text 243)"
+    hint " 8. $(text 244)"
+    hint " 9. $(text 215)"
+    hint " 10. $(text 216)"
+    hint " 11. $(text 217)"
     hint " 0. $(text 35)\n"
 
     local act=""
@@ -1682,22 +1925,44 @@ manage_relay() {
         ;;
 
       6)
+        relay_delete_single_rule
+        ;;
+
+      7)
+        relay_test_outbounds
+        ;;
+
+      8)
+        relay_create_failover_group
+        ;;
+
+      9)
         if relay_pick_outbound 0; then
           local del_tag="$RELAY_PICKED_TAG"
           local ob_tmp="${TEMP_DIR}/relay_ob_new.json"
           local rt_tmp="${TEMP_DIR}/relay_rt_new.json"
           local ob_arg="__DELETE__" rt_arg="__KEEP__"
 
-          jq_exec --arg t "$del_tag" '.outbounds = ((.outbounds // []) | map(select(.tag != $t)))' "$RELAY_OUTBOUND_FILE" > "$ob_tmp"
+          # 移除被删出口，同时从 urltest 组中剔除该成员（若组变空则一并移除）
+          jq_exec --arg t "$del_tag" '
+            .outbounds = (
+              (.outbounds // [])
+              | map(select(.tag != $t))
+              | map(if .type == "urltest" then .outbounds = ((.outbounds // []) | map(select(. != $t))) else . end)
+              | map(select(.type != "urltest" or ((.outbounds // []) | length) > 0))
+            )
+          ' "$RELAY_OUTBOUND_FILE" > "$ob_tmp"
           if [ "$(jq_exec -r '.outbounds | length' "$ob_tmp" 2>/dev/null || echo 0)" -gt 0 ]; then
             ob_arg="$ob_tmp"
           fi
 
-          # 同步清理 09_relay_route.json 中引用了被删 tag 的 final、rules 及不再使用的 rule_set
+          # 同步清理 09_relay_route.json 中引用了不存在出口的 final、rules 及不再使用的 rule_set
           if [ -s "$RELAY_ROUTE_FILE" ]; then
-            jq_exec --arg t "$del_tag" '
-              .route.rules = ((.route.rules // []) | map(select(.outbound != $t)))
-              | if (.route.final // "") == $t then del(.route.final) else . end
+            local valid_tags_json
+            valid_tags_json=$(jq_exec -c '[(.outbounds // [])[]?.tag] + ["direct"]' "$ob_tmp" 2>/dev/null || echo '["direct"]')
+            jq_exec --argjson valid "$valid_tags_json" '
+              .route.rules = ((.route.rules // []) | map(select(.outbound as $o | $valid | index($o))))
+              | if (.route.final // "") != "" and ((.route.final as $f | $valid | index($f)) == null) then del(.route.final) else . end
               | ([.route.rules[]?.rule_set[]?] | unique) as $used_rs
               | if .route.rule_set then .route.rule_set = (.route.rule_set | map(select(.tag as $tg | $used_rs | index($tg)))) else . end
               | if ((.route.rule_set // []) | length) == 0 then del(.route.rule_set) else . end
@@ -1717,7 +1982,7 @@ manage_relay() {
         fi
         ;;
 
-      7)
+      10)
         local del_all=""
         reading "\n $(text 228) " del_all
         local ob_arg="__KEEP__"
@@ -1727,7 +1992,7 @@ manage_relay() {
         fi
         ;;
 
-      8)
+      11)
         hint "\n --- 08_relay_outbound.json ---"
         [ -s "$RELAY_OUTBOUND_FILE" ] && jq_exec '.' "$RELAY_OUTBOUND_FILE" || echo " ($(text 234))"
         hint "\n --- 09_relay_route.json ---"
@@ -1740,6 +2005,260 @@ manage_relay() {
         ;;
     esac
   done
+}
+
+# ======================== 实时监控 / DNS策略 / 防滥用 / 备份迁移 / 极简落地 ========================
+
+# 字节格式化（供实时流量统计显示）
+format_bytes_human() {
+  local b="${1:-0}"
+  awk -v b="$b" 'BEGIN {
+    if (b >= 1073741824) printf "%.2f GB", b/1073741824;
+    else if (b >= 1048576) printf "%.2f MB", b/1048576;
+    else if (b >= 1024) printf "%.2f KB", b/1024;
+    else printf "%d B", b;
+  }'
+}
+
+# 实时连接 / 流量 / 日志排查 (sb -i)
+show_runtime_monitor() {
+  [ ! -d "${WORK_DIR}/conf" ] && error " $(text 107) "
+  while true; do
+    info "\n ==================== $(text 266) ===================="
+    local conn_json
+    if conn_json=$(clash_api_get "/connections" 5) && [ -n "$conn_json" ]; then
+      local up_b down_b active_cnt
+      up_b=$(printf '%s' "$conn_json" | jq_exec -r '.uploadTotal // 0' 2>/dev/null || echo 0)
+      down_b=$(printf '%s' "$conn_json" | jq_exec -r '.downloadTotal // 0' 2>/dev/null || echo 0)
+      active_cnt=$(printf '%s' "$conn_json" | jq_exec -r '(.connections // []) | length' 2>/dev/null || echo 0)
+      hint " $(text 267) ↑ $(format_bytes_human "$up_b")  /  ↓ $(format_bytes_human "$down_b")"
+      hint " $(text 268) ${active_cnt}"
+      if [ "${active_cnt:-0}" -gt 0 ]; then
+        printf '%s' "$conn_json" | jq_exec -r '
+          (.connections // [])[:20][] |
+          "   [\(.metadata.inboundName // .metadata.inbound // "in")] " +
+          ((.metadata.host // "" | if length > 0 then . else (.metadata.destinationIP // "?") end) + ":" + ((.metadata.destinationPort // "") | tostring)) +
+          "  --[" + (.rule // "final") + (if (.rulePayload // "") != "" then ":" + .rulePayload else "" end) + "]-->  " +
+          ((.chains // []) | reverse | join(" -> "))
+        ' 2>/dev/null
+      fi
+    else
+      warning " $(text 248)"
+    fi
+    info " ===============================================================\n"
+    hint " 1. $(text 269)"
+    hint " 2. $(text 270)"
+    hint " 3. $(text 271)"
+    hint " 0. $(text 35)\n"
+    local m_act=""
+    reading " $(text 24) " m_act
+    case "$m_act" in
+      1) continue ;;
+      2)
+        hint "\n --- ${WORK_DIR}/logs/box.log (last 50 lines) ---"
+        if [ -s "${WORK_DIR}/logs/box.log" ]; then
+          tail -n 50 "${WORK_DIR}/logs/box.log"
+        elif command -v journalctl >/dev/null 2>&1; then
+          journalctl -u sing-box -n 50 --no-pager 2>/dev/null || true
+        else
+          echo " ($(text 234))"
+        fi
+        echo ""
+        ;;
+      3)
+        : > "${WORK_DIR}/logs/box.log" 2>/dev/null || true
+        info "\n $(text 272) \n"
+        ;;
+      0|"") break ;;
+    esac
+  done
+}
+
+# 一键切换 DNS / 出站 IP 优先策略（写入 05_dns.json，校验失败自动回滚）
+change_dns_strategy() {
+  local dns_file="${WORK_DIR}/conf/05_dns.json"
+  [ ! -s "$dns_file" ] && error " $(text 107) "
+  local cur_s
+  cur_s=$(jq_exec -r '.dns.strategy // "prefer_ipv4"' "$dns_file" 2>/dev/null)
+  hint "\n $(text 258) (current: ${cur_s})"
+  hint " 1. prefer_ipv4"
+  hint " 2. prefer_ipv6"
+  hint " 3. ipv4_only"
+  hint " 4. ipv6_only"
+  hint " 0. $(text 35)\n"
+  local s_pick="" new_s=""
+  reading " $(text 24) " s_pick
+  case "$s_pick" in
+    1) new_s="prefer_ipv4" ;;
+    2) new_s="prefer_ipv6" ;;
+    3) new_s="ipv4_only" ;;
+    4) new_s="ipv6_only" ;;
+    *) return ;;
+  esac
+  mkdir -p "$TEMP_DIR"
+  local bak="${TEMP_DIR}/05_dns.bak" tmp="${TEMP_DIR}/05_dns.tmp"
+  cp -f "$dns_file" "$bak"
+  jq_exec --arg s "$new_s" '.dns.strategy = $s' "$dns_file" > "$tmp" && cp -f "$tmp" "$dns_file"
+  if [ -x "${WORK_DIR}/sing-box" ]; then
+    local err
+    if ! err=$("${WORK_DIR}/sing-box" check -C "${WORK_DIR}/conf/" 2>&1); then
+      cp -f "$bak" "$dns_file"
+      rm -f "$bak" "$tmp"
+      warning "\n $(text 223)\n ${err}\n"
+      return 1
+    fi
+  fi
+  rm -f "$bak" "$tmp"
+  cmd_systemctl restart sing-box
+  info "\n $(text 259) (${new_s}) \n"
+}
+
+# 安全防滥用规则文件（位于 03_route.json 之后、09_relay_route.json 之前，使用 sing-box 1.12+ rule action reject）
+SECURITY_ROUTE_FILE="${WORK_DIR}/conf/08_security_route.json"
+
+security_rules_status_summary() {
+  local p_on=0 bt_on=0
+  if [ -s "$SECURITY_ROUTE_FILE" ]; then
+    jq_exec -e '.route.rules[]? | select(.ip_is_private == true)' "$SECURITY_ROUTE_FILE" >/dev/null 2>&1 && p_on=1
+    jq_exec -e '.route.rules[]? | select(.protocol == "bittorrent")' "$SECURITY_ROUTE_FILE" >/dev/null 2>&1 && bt_on=1
+  fi
+  local p_txt bt_txt
+  [ "$p_on" = 1 ] && p_txt="$(text 264)" || p_txt="$(text 265)"
+  [ "$bt_on" = 1 ] && bt_txt="$(text 264)" || bt_txt="$(text 265)"
+  printf 'PrivateIP:%s | BT:%s' "$p_txt" "$bt_txt"
+}
+
+manage_security_rules() {
+  [ ! -d "${WORK_DIR}/conf" ] && error " $(text 107) "
+  mkdir -p "$TEMP_DIR"
+  while true; do
+    local p_on=0 bt_on=0
+    if [ -s "$SECURITY_ROUTE_FILE" ]; then
+      jq_exec -e '.route.rules[]? | select(.ip_is_private == true)' "$SECURITY_ROUTE_FILE" >/dev/null 2>&1 && p_on=1
+      jq_exec -e '.route.rules[]? | select(.protocol == "bittorrent")' "$SECURITY_ROUTE_FILE" >/dev/null 2>&1 && bt_on=1
+    fi
+    info "\n ==================== $(text 260) ===================="
+    hint " 1. $(text 261)  [$([ "$p_on" = 1 ] && text 264 || text 265)]"
+    hint " 2. $(text 262)  [$([ "$bt_on" = 1 ] && text 264 || text 265)]"
+    hint " 0. $(text 35)\n"
+    local sec_pick=""
+    reading " $(text 24) " sec_pick
+    case "$sec_pick" in
+      1) [ "$p_on" = 1 ] && p_on=0 || p_on=1 ;;
+      2) [ "$bt_on" = 1 ] && bt_on=0 || bt_on=1 ;;
+      0|"") break ;;
+      *) continue ;;
+    esac
+
+    local bak="${TEMP_DIR}/08_sec.bak" had_sec=0
+    if [ -f "$SECURITY_ROUTE_FILE" ]; then cp -f "$SECURITY_ROUTE_FILE" "$bak"; had_sec=1; fi
+
+    if [ "$p_on" = 0 ] && [ "$bt_on" = 0 ]; then
+      rm -f "$SECURITY_ROUTE_FILE"
+    else
+      jq_exec -n --argjson p "$p_on" --argjson bt "$bt_on" '{
+        route: {
+          rules: (
+            (if $p == 1 then [{ ip_is_private: true, action: "reject" }] else [] end)
+            + (if $bt == 1 then [{ protocol: "bittorrent", action: "reject" }] else [] end)
+          )
+        }
+      }' > "$SECURITY_ROUTE_FILE"
+    fi
+
+    if [ -x "${WORK_DIR}/sing-box" ]; then
+      local err
+      if ! err=$("${WORK_DIR}/sing-box" check -C "${WORK_DIR}/conf/" 2>&1); then
+        [ "$had_sec" = 1 ] && cp -f "$bak" "$SECURITY_ROUTE_FILE" || rm -f "$SECURITY_ROUTE_FILE"
+        rm -f "$bak"
+        warning "\n $(text 223)\n ${err}\n"
+        continue
+      fi
+    fi
+    rm -f "$bak"
+    cmd_systemctl restart sing-box
+    info "\n $(text 263) \n"
+  done
+}
+
+# 配置一键备份与恢复迁移 (sb -m)
+manage_backup() {
+  [ ! -d "${WORK_DIR}" ] && error " $(text 107) "
+  mkdir -p "$TEMP_DIR"
+  info "\n ==================== $(text 273) ===================="
+  hint " 1. $(text 274)"
+  hint " 2. $(text 275)"
+  hint " 0. $(text 35)\n"
+  local b_pick=""
+  reading " $(text 24) " b_pick
+  case "$b_pick" in
+    1)
+      local ts out_tar
+      ts=$(date +%Y%m%d-%H%M%S)
+      out_tar="/root/sing-box-backup-${ts}.tar.gz"
+      local items=() candidate
+      for candidate in conf cert language list subscribe nginx.conf tunnel.json tunnel.yml; do
+        [ -e "${WORK_DIR}/${candidate}" ] && items+=("$candidate")
+      done
+      if [ "${#items[@]}" -eq 0 ]; then
+        error " $(text 107) "
+      fi
+      tar -czf "$out_tar" -C "${WORK_DIR}" "${items[@]}"
+      info "\n $(text 276) ${out_tar} ($(du -h "$out_tar" 2>/dev/null | awk '{print $1}')) \n"
+      ;;
+    2)
+      local in_tar=""
+      reading "\n $(text 277)\n " in_tar
+      in_tar=$(printf '%s' "$in_tar" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+      if [ ! -s "$in_tar" ] || ! tar -tzf "$in_tar" >/dev/null 2>&1; then
+        warning "\n $(text 278) \n"
+        return 1
+      fi
+      local rollback_tar="${TEMP_DIR}/rollback_conf.tar.gz"
+      tar -czf "$rollback_tar" -C "${WORK_DIR}" conf 2>/dev/null || true
+      tar -xzf "$in_tar" -C "${WORK_DIR}"
+      if [ -x "${WORK_DIR}/sing-box" ]; then
+        local err
+        if ! err=$("${WORK_DIR}/sing-box" check -C "${WORK_DIR}/conf/" 2>&1); then
+          rm -rf "${WORK_DIR}/conf"
+          tar -xzf "$rollback_tar" -C "${WORK_DIR}" 2>/dev/null || true
+          rm -f "$rollback_tar"
+          warning "\n $(text 223)\n ${err}\n"
+          return 1
+        fi
+      fi
+      rm -f "$rollback_tar"
+      cmd_systemctl restart sing-box
+      info "\n $(text 279) \n"
+      ;;
+  esac
+}
+
+# 极简落地机安装预设 (sb -p)：跳过 Nginx / 订阅 / Argo，仅装轻量协议
+install_landing_minimal() {
+  hint "\n $(text 280)"
+  hint " 1. VLESS + Reality (推荐，抗封锁且性能好)"
+  hint " 2. Shadowsocks 2022 (最轻量，极适合中转对接)"
+  hint " 3. Hysteria2 (UDP 高速落地)"
+  hint " 4. VLESS + Reality + Shadowsocks 2022 (双协议组合)"
+  local l_pick=""
+  reading "\n $(text 24) " l_pick
+  case "$l_pick" in
+    1|"") CHOOSE_PROTOCOLS='b' ;;
+    2) CHOOSE_PROTOCOLS='f' ;;
+    3) CHOOSE_PROTOCOLS='c' ;;
+    4) CHOOSE_PROTOCOLS='bf' ;;
+    *) CHOOSE_PROTOCOLS='b' ;;
+  esac
+  IS_FAST_INSTALL='is_fast_install'
+  START_PORT=${START_PORT:-"$START_PORT_DEFAULT"}
+  CDN=${CDN:-"${CDN_DOMAIN[0]}"}
+  IS_SUB='no_sub'
+  IS_ARGO='no_argo'
+  IS_HOPPING='no_hopping'
+  install_sing-box
+  export_list install
+  create_shortcut
 }
 
 # 更换优选域名 / reality SNI / 节点名 / UUID
@@ -1785,6 +2304,17 @@ change_config() {
 
   # 中转 / 落地出口管理
   MENU_IDX+=(207) && MENU_KEY+=(relay) && MENU_VAL+=("$(relay_status_summary)")
+
+  # 出站 IP / DNS 优先策略
+  local DNS_STRAT_NOW="prefer_ipv4"
+  [ -s "${WORK_DIR}/conf/05_dns.json" ] && DNS_STRAT_NOW=$(jq_exec -r '.dns.strategy // "prefer_ipv4"' "${WORK_DIR}/conf/05_dns.json" 2>/dev/null)
+  MENU_IDX+=(255) && MENU_KEY+=(dnsstrategy) && MENU_VAL+=("${DNS_STRAT_NOW}")
+
+  # 安全防滥用拦截（私有 IP / BT）
+  MENU_IDX+=(256) && MENU_KEY+=(security) && MENU_VAL+=("$(security_rules_status_summary)")
+
+  # 配置备份与恢复
+  MENU_IDX+=(254) && MENU_KEY+=(backup) && MENU_VAL+=("")
 
   # 订阅开关（基于 nginx.conf 文件内容检测）
   local SUB_ENABLED=0
@@ -1897,6 +2427,15 @@ change_config() {
     return
   elif [ "$KEY" = "relay" ]; then
     manage_relay
+    return
+  elif [ "$KEY" = "dnsstrategy" ]; then
+    change_dns_strategy
+    return
+  elif [ "$KEY" = "security" ]; then
+    manage_security_rules
+    return
+  elif [ "$KEY" = "backup" ]; then
+    manage_backup
     return
   elif [ "$KEY" = "hy2bw" ]; then
     # 修改 Hysteria2 带宽
@@ -7586,9 +8125,11 @@ menu_setting() {
     OPTION[8]="8 .  $(text 62)"
     OPTION[9]="9 .  $(text 33)"
     OPTION[10]="10.  $(text 206)"
-    OPTION[11]="11.  $(text 59)"
-    OPTION[12]="12.  $(text 69)"
-    OPTION[13]="13.  $(text 76)"
+    OPTION[11]="11.  $(text 253)"
+    OPTION[12]="12.  $(text 254)"
+    OPTION[13]="13.  $(text 59)"
+    OPTION[14]="14.  $(text 69)"
+    OPTION[15]="15.  $(text 76)"
 
     ACTION[1]() { export_list; exit 0; }
 
@@ -7622,29 +8163,33 @@ menu_setting() {
     ACTION[8]() { change_protocols; exit; }
     ACTION[9]() { uninstall; exit; }
     ACTION[10]() { manage_relay; exit; }
-    ACTION[11]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/argox/main/argox.sh) -$L; exit; }
-    ACTION[12]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/sba/main/sba.sh) -$L; exit; }
-    ACTION[13]() { bash <(wget --no-check-certificate -qO- https://tcp.hy2.sh/); exit; }
+    ACTION[11]() { show_runtime_monitor; exit; }
+    ACTION[12]() { manage_backup; exit; }
+    ACTION[13]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/argox/main/argox.sh) -$L; exit; }
+    ACTION[14]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/sba/main/sba.sh) -$L; exit; }
+    ACTION[15]() { bash <(wget --no-check-certificate -qO- https://tcp.hy2.sh/); exit; }
   else
-    OPTION[1]="1.  $(text 115)"
-    OPTION[2]="2.  $(text 34) + Argo + $(text 80) $(text 89)"
-    OPTION[3]="3.  $(text 34) + Argo $(text 89)"
-    OPTION[4]="4.  $(text 34) + $(text 80) $(text 89)"
-    OPTION[5]="5.  $(text 34)"
-    OPTION[6]="6.  $(text 32)"
-    OPTION[7]="7.  $(text 59)"
-    OPTION[8]="8.  $(text 69)"
-    OPTION[9]="9.  $(text 76)"
+    OPTION[1]="1 .  $(text 115)"
+    OPTION[2]="2 .  $(text 257)"
+    OPTION[3]="3 .  $(text 34) + Argo + $(text 80) $(text 89)"
+    OPTION[4]="4 .  $(text 34) + Argo $(text 89)"
+    OPTION[5]="5 .  $(text 34) + $(text 80) $(text 89)"
+    OPTION[6]="6 .  $(text 34)"
+    OPTION[7]="7 .  $(text 32)"
+    OPTION[8]="8 .  $(text 59)"
+    OPTION[9]="9 .  $(text 69)"
+    OPTION[10]="10.  $(text 76)"
 
     ACTION[1]() { IS_FAST_INSTALL='is_fast_install'; CHOOSE_PROTOCOLS=${CHOOSE_PROTOCOLS:-'a'}; START_PORT=${START_PORT:-"$START_PORT_DEFAULT"}; CDN=${CDN:-"${CDN_DOMAIN[0]}"}; IS_SUB='is_sub'; IS_ARGO='is_argo'; install_sing-box; export_list install; create_shortcut; exit; }
-    ACTION[2]() { IS_SUB=is_sub; IS_ARGO=is_argo; install_sing-box; export_list install; create_shortcut; exit; }
-    ACTION[3]() { IS_SUB=no_sub; IS_ARGO=is_argo; install_sing-box; export_list install; create_shortcut; exit; }
-    ACTION[4]() { IS_SUB=is_sub; IS_ARGO=no_argo; install_sing-box; export_list install; create_shortcut; exit; }
-    ACTION[5]() { install_sing-box; export_list install; create_shortcut; exit; }
-    ACTION[6]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master/tcpx.sh); exit; }
-    ACTION[7]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/argox/main/argox.sh) -$L; exit; }
-    ACTION[8]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/sba/main/sba.sh) -$L; exit; }
-    ACTION[9]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://tcp.hy2.sh/); exit; }
+    ACTION[2]() { install_landing_minimal; exit; }
+    ACTION[3]() { IS_SUB=is_sub; IS_ARGO=is_argo; install_sing-box; export_list install; create_shortcut; exit; }
+    ACTION[4]() { IS_SUB=no_sub; IS_ARGO=is_argo; install_sing-box; export_list install; create_shortcut; exit; }
+    ACTION[5]() { IS_SUB=is_sub; IS_ARGO=no_argo; install_sing-box; export_list install; create_shortcut; exit; }
+    ACTION[6]() { install_sing-box; export_list install; create_shortcut; exit; }
+    ACTION[7]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master/tcpx.sh); exit; }
+    ACTION[8]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/argox/main/argox.sh) -$L; exit; }
+    ACTION[9]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://raw.githubusercontent.com/fscarmen/sba/main/sba.sh) -$L; exit; }
+    ACTION[10]() { bash <(wget --no-check-certificate -qO- ${GH_PROXY}https://tcp.hy2.sh/); exit; }
   fi
 
   [ "${#OPTION[@]}" -ge '10' ] && OPTION[0]="0 .  $(text 35)" || OPTION[0]="0.  $(text 35)"
@@ -7882,6 +8427,15 @@ while [ $idx -lt ${#ORIG_ARGS[@]} ]; do
     -O )
       manage_relay; exit 0
       ;;
+    -I )
+      show_runtime_monitor; exit 0
+      ;;
+    -M )
+      manage_backup; exit 0
+      ;;
+    -P|--LANDING )
+      IS_LANDING_INSTALL=is_landing_install
+      ;;
     --LANGUAGE )
       [ "$HAS_INLINE_VAL" -eq 0 ] && ((idx++)) || true
       [[ "${OPT_VAL^^}" =~ ^C ]] && LANGUAGE=C || LANGUAGE=E
@@ -8007,6 +8561,8 @@ if [ "$NONINTERACTIVE_INSTALL" = 'noninteractive_install' ]; then
   install_sing-box
   export_list install
   create_shortcut
+elif [ "$IS_LANDING_INSTALL" = 'is_landing_install' ]; then
+  install_landing_minimal
 elif [ "$IS_FAST_INSTALL" = 'is_fast_install' ]; then
   # 预设默认值
   CHOOSE_PROTOCOLS=${CHOOSE_PROTOCOLS:-'a'}

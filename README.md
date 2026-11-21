@@ -27,7 +27,12 @@
 
 * * *
 ## 1.更新信息
-2026.11.21 新增中转 / 落地出口管理 (`sb -o` 或在 `sb` / `sb -d` 菜单中进入)：支持直接粘贴落地机分享链接 (`vless://`、`ss://`、`hy2://`、`tuic://`、`trojan://`、`socks5://`、`http://`) 或原生 sing-box outbound JSON 自动生成独立配置 (`08_relay_outbound.json` / `09_relay_route.json`)，支持全局中转、按 Geosite 规则集分流（内置 DMM / AI 国际全集 / Netflix / Disney+ / TikTok 预设及自定义 `geosite:xxx`，自动适配 `GH_PROXY`）、按域名后缀/入站端口分流、一键恢复直连以及 `sing-box check` 失败自动回滚；同步支持 `config.conf` / 命令行参数 `--RELAY_URI`、`--RELAY_MODE`、`--RELAY_GEOSITES`、`--RELAY_DOMAINS` 无交互部署
+2026.11.21 新增全套中转与运维增强功能：
+- **中转 / 落地出口管理 (`sb -o`)**：支持粘贴落地机分享链接 (`vless://`、`ss://`、`hy2://`、`tuic://`、`trojan://`、`socks5://`、`http://`) 或原生 JSON 自动生成独立配置 (`08_relay_outbound.json` / `09_relay_route.json`)；支持全局中转、按 Geosite 规则集分流（内置 DMM / AI 国际全集 / Netflix / Disney+ / TikTok 预设及自定义 `geosite:xxx`，自动适配 `GH_PROXY`）、按域名后缀/入站端口分流、**单条删除规则**、**落地机连通性与延迟测速**、**创建 `urltest` 故障自动切换组**、一键恢复直连及 `sing-box check` 失败自动回滚；同步支持 `config.conf` / `--RELAY_URI`、`--RELAY_MODE`、`--RELAY_GEOSITES`、`--RELAY_DOMAINS` 无交互部署。
+- **实时监控与排障 (`sb -i`)**：基于内置 `clash_api` 查看累计流量、当前活跃连接（显示命中规则与出口）以及最近 50 行日志。
+- **配置一键备份与迁移 (`sb -m`)**：支持打包导出/导入恢复 `/etc/sing-box` 核心配置，失败自动回滚。
+- **`sb -d` 新增两项快捷配置**：一键切换出站 IP / DNS 策略 (`prefer_ipv4` / `prefer_ipv6` / `ipv4_only` / `ipv6_only`)；安全防滥用拦截开关（`08_security_route.json`：私有 IP / BitTorrent 协议 `reject`）。
+- **极简落地机安装预设 (`sb -p` / 未安装菜单第 2 项)**：跳过 Nginx、订阅与 Argo，仅安装轻量级协议（VLESS-Reality / SS-2022 / Hysteria2），省内存、开箱即可对接中转机。
 
 2026.11.18 Fork 优化版：移除全部内置 WARP 链式代理解锁 ChatGPT 组件（服务端纯直连出站，零外部远程规则集依赖）；修复纯 IPv6 主机下 GitHub 代理并发探测竞态（`wait -n` 误杀可用双栈代理）、版本号校验污染及内核下载失败问题，支持多代理自动故障转移与本地 `sb` 离线兜底；修复 `sb -d` 修改参数误改二进制、修改起始端口冲突、`config.conf` 无交互参数失效、`clash2` 漏掉 H2+Reality、Throne 自定义 CDN 端口失效及 Alpine BusyBox `base64` 兼容等问题
 
