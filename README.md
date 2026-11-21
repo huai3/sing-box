@@ -1,677 +1,163 @@
-# 【Sing-box 全家桶】
-
-> 本项目基于 [fscarmen/sing-box](https://github.com/fscarmen/sing-box)（遵循 GNU GPL v3 开源协议）精简修复优化：彻底移除了已过时的内置 WARP 链式代理解锁 ChatGPT 组件，修复了纯 IPv6 主机无法访问 GitHub 下载内核、配置修改误伤二进制、端口区间修改冲突、`config.conf` 参数失效等多项问题。
-
-* * *
-
-# 目录
-
-- [1.更新信息](README.md#1更新信息)
-- [2.项目特点](README.md#2项目特点)
-- [3.Sing-box for VPS 运行脚本](README.md#3sing-box-for-vps-运行脚本)
-  - [交互输入快捷键](README.md#交互输入快捷键)
-- [4.无交互极速安装](README.md#4无交互极速安装)
-- [5.Json Argo Tunnel 获取 (推荐)](README.md#5json-argo-tunnel-获取-推荐)
-- [6.Token Argo Tunnel 方案设置任意端口回源以使用 CDN](README.md#6token-argo-tunnel-方案设置任意端口回源以使用-cdn)
-- [7.使用 Cloudflare API 自动创建 Argo](README.md#7使用-cloudflare-api-自动创建-argo)
-- [8.Vmess / Vless 方案设置任意端口回源以使用 CDN](README.md#8vmess--vless-方案设置任意端口回源以使用-cdn)
-- [9.Docker 和 Docker compose 安装](README.md#9docker-和-docker-compose-安装)
-- [10.Throne 设置 shadowTLS 方法](README.md#10throne-设置-shadowtls-方法)
-- [11.主体目录文件及说明](README.md#11主体目录文件及说明)
-- [12.自签证书在不同客户端中的处理方式对比](README.md#12自签证书在不同客户端中的处理方式对比)
-- [13.鸣谢下列作者的文章和项目](README.md#13鸣谢下列作者的文章和项目)
-- [14.感谢赞助商](README.md#14感谢赞助商)
-- [15.免责声明](README.md#15免责声明)
-- [16.开源证书](README.md#16开源证书)
-
-
-* * *
-## 1.更新信息
-2026.11.21 新增全套中转与运维增强功能：
-- **中转 / 落地出口管理 (`sb -o`)**：支持粘贴落地机分享链接 (`vless://`、`ss://`、`hy2://`、`tuic://`、`trojan://`、`socks5://`、`http://`) 或原生 JSON 自动生成独立配置 (`08_relay_outbound.json` / `09_relay_route.json`)；支持全局中转、按 Geosite 规则集分流（内置 DMM / AI 国际全集 / Netflix / Disney+ / TikTok 预设及自定义 `geosite:xxx`，自动适配 `GH_PROXY`）、按域名后缀/入站端口分流、**单条删除规则**、**落地机连通性与延迟测速**、**创建 `urltest` 故障自动切换组**、一键恢复直连及 `sing-box check` 失败自动回滚；同步支持 `config.conf` / `--RELAY_URI`、`--RELAY_MODE`、`--RELAY_GEOSITES`、`--RELAY_DOMAINS` 无交互部署。
-- **实时监控与排障 (`sb -i`)**：基于内置 `clash_api` 查看累计流量、当前活跃连接（显示命中规则与出口）以及最近 50 行日志。
-- **配置一键备份与迁移 (`sb -m`)**：支持打包导出/导入恢复 `/etc/sing-box` 核心配置，失败自动回滚。
-- **`sb -d` 新增两项快捷配置**：一键切换出站 IP / DNS 策略 (`prefer_ipv4` / `prefer_ipv6` / `ipv4_only` / `ipv6_only`)；安全防滥用拦截开关（`08_security_route.json`：私有 IP / BitTorrent 协议 `reject`）。
-- **极简落地机安装预设 (`sb -p` / 未安装菜单第 2 项)**：跳过 Nginx、订阅与 Argo，仅安装轻量级协议（VLESS-Reality / SS-2022 / Hysteria2），省内存、开箱即可对接中转机。
-
-2026.11.18 Fork 优化版：移除全部内置 WARP 链式代理解锁 ChatGPT 组件（服务端纯直连出站，零外部远程规则集依赖）；修复纯 IPv6 主机下 GitHub 代理并发探测竞态（`wait -n` 误杀可用双栈代理）、版本号校验污染及内核下载失败问题，支持多代理自动故障转移与本地 `sb` 离线兜底；修复 `sb -d` 修改参数误改二进制、修改起始端口冲突、`config.conf` 无交互参数失效、`clash2` 漏掉 H2+Reality、Throne 自定义 CDN 端口失效及 Alpine BusyBox `base64` 兼容等问题
-
-
-
-
-## 2.项目特点:
-
-* 一键部署多协议，可以单选、多选或全选 ShadowTLS v3 / XTLS Reality / Hysteria2 / Tuic V5 / ShadowSocks / Trojan / Vmess + ws / Vless + ws + tls / H2 Reality / gRPC Reality / AnyTLS / NaiveProxy / Snell v6, 总有一款适合你
-* 所有协议均不需要域名，可选 Cloudflare Argo Tunnel 内网穿透以支持传统方式为 websocket 的协议
-* Hysteria2 支持 Realm 模式，适用于回国、没有公网入口、住宅 NAT、CGNAT 等无法开放入站端口的机器；有公网入口时不建议使用
-* 节点信息输出到 V2rayN / Clash Verge / 小火箭 / Throne / Sing-box (SFI, SFA, SFM)，自动适配客户端，一个订阅 url 走天下；另有**动态订阅**——按请求 Host 实时渲染，直连节点 server 跟随访问地址（IPv4 / IPv6 / 域名 / 固定隧道），一份订阅适配多 IP 与 IPv6 地址池，WS / CDN / Argo 节点不变，独立开关、关闭后普通订阅照常可用
-* 自定义端口，适合有限开放端口的 nat 小鸡
-* 安装后通过 sb -d 可修改监听端口：修改开始端口（各协议按顺序占用）或为各协议设置独立（非连续）端口，端口变更自动同步 nginx 反代并热加载
-* 服务器地址支持填写 IP 或域名，NAT VPS 公网 IP 每日变化时可直接使用 DDNS 域名，新安装与 sb -d 修改均可
-* 智能判断操作系统: Ubuntu 、Debian 、CentOS 、Alpine 、Armbian 和 Arch Linux,请务必选择 LTS 系统
-* 支持硬件结构类型: AMD 和 ARM，支持 IPv4 和 IPv6
-* 无交互极速安排模式: 一个回车完成 13 个协议的安装
-
-
-## 3.Sing-box for VPS 运行脚本:
-
-* 首次运行
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh)
-```
-
-* 纯 IPv6 主机（无法直连 GitHub 时）：
-```
-bash <(wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh)
-```
-
-* 再次运行
-```
-sb
-```
-
-  | Option 参数      | Remark 备注 |
-  | --------------- | ------ |
-  | -c              | Chinese 中文 |
-  | -e              | English 英文 |
-  | -l              | Quick deploy (Chinese version) 使用中文快速安装 |
-  | -k              | Quick deploy (English version) 使用英文快速安装 |
-  | -u              | Uninstall 卸载 |
-  | -n              | Export Nodes list 显示节点信息 |
-  | -d              | Change config 修改参数 |
-  | -s              | Stop / Start the Sing-box service 停止/开启 Sing-box 服务 |
-  | -a              | Stop / Start the Argo Tunnel service 停止/开启 Argo Tunnel 服务 |
-  | -v              | Sync Sing-box and Cloudflared to the newest 同步 Sing-box 和 Cloudflared 到最新版本 |
-  | -b              | Upgrade kernel, turn on BBR, change Linux system 升级内核、安装BBR、DD脚本 |
-  | -r              | Add and remove protocols 添加和删除协议 |
-
-
-### 交互输入快捷键
-
-在交互终端中输入内容时，可以使用方向键、Home/End、Ctrl+A 等常用快捷键快速修改。
-
-| 按键 | 作用 |
-| --- | --- |
-| `←` / `→` | 光标左移 / 右移 |
-| `Home` / `End`，或 `Ctrl+A` / `Ctrl+E` | 跳到行首 / 行尾 |
-| `Backspace` / `Delete` | 删除光标前 / 后一个字符 |
-| `Ctrl+U` | 删除**光标到行首**的内容（光标在行尾时等同于清空当前行） |
-| `Ctrl+K` | 删除**光标到行尾**的内容 |
-| `Ctrl+W` | 删除光标前的**一个词**（以空格分隔） |
-| `Alt+D` | 删除光标后的**一个词** |
-| `Ctrl+Y` | 粘回最近一次被 `Ctrl+U` / `Ctrl+K` / `Ctrl+W` 删除的内容 |
-| `Ctrl+L` | 清屏并重绘当前行 |
-
-
-## 4.无交互极速安装:
-### 方式1. 最快的安装方式：自动补充所有参数
-#### 中文
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) -l
-```
-
-#### 英文
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) -k
-```
-
-### 方式2. KV 配置文件，内容参照本库里的 config.conf
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) -f config.conf
-```
-
-### 方式3. KV 传参，举例
-
-<details>
-    <summary> 使用 Origin Rule + 订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --VMESS_HOST_DOMAIN vmess.test.com \
-  --VLESS_HOST_DOMAIN vless.test.com \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --SUBSCRIBE=true \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-
-</details>
-
-<details>
-    <summary> 使用 Origin Rule ，不要订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --VMESS_HOST_DOMAIN vmess.test.com \
-  --VLESS_HOST_DOMAIN vless.test.com \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-<details>
-    <summary> 使用 Argo 临时隧道 + 订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --SUBSCRIBE=true \
-  --ARGO=true \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-<details>
-    <summary> 使用 Argo 临时隧道，不要订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --ARGO=true \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-<details>
-    <summary> 使用 Argo Json 隧道 + 订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --SUBSCRIBE=true \
-  --ARGO=true \
-  --ARGO_DOMAIN=sb.argo.com \
-  --ARGO_AUTH='{"AccountTag":"9cc9e3e4d8f29d2a02e297f14f20513a","TunnelSecret":"6AYfKBOoNlPiTAuWg64ZwujsNuERpWLm6pPJ2qpN8PM=","TunnelID":"1ac55430-f4dc-47d5-a850-bdce824c4101"}' \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-<details>
-    <summary> 使用 Argo Json 隧道，不要订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --ARGO=true \
-  --ARGO_DOMAIN=sb.argo.com \
-  --ARGO_AUTH='{"AccountTag":"9cc9e3e4d8f29d2a02e297f14f20513a","TunnelSecret":"6AYfKBOoNlPiTAuWg64ZwujsNuERpWLm6pPJ2qpN8PM=","TunnelID":"1ac55430-f4dc-47d5-a850-bdce824c4101"}' \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-<details>
-    <summary> 使用 Argo Token 隧道 + 订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --SUBSCRIBE=true \
-  --ARGO=true \
-  --ARGO_DOMAIN=sb.argo.com \
-  --ARGO_AUTH='sudo cloudflared service install eyJhIjoiOWNjOWUzZTRkOGYyOWQyYTAyZTI5N2YxNGYyMDUxM2EiLCJ0IjoiOGNiZDA4ZjItNGM0MC00OGY1LTlmZDYtZjlmMWQ0YTcxMjUyIiwicyI6IllXWTFORGN4TW1ZdE5HTXdZUzAwT0RaakxUbGxNMkl0Wm1VMk5URTFOR0l4TkdKayJ9' \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-<details>
-    <summary> 使用 Cloudflare API 创建 Argo 隧道，不要订阅（点击即可展开或收起）</summary>
-<br>
-
-```
-bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
-  --LANGUAGE c \
-  --CHOOSE_PROTOCOLS a \
-  --START_PORT 8881 \
-  --PORT_NGINX 60000 \
-  --SERVER_IP 123.123.123.123 \
-  --CDN skk.moe \
-  --UUID_CONFIRM 20f7fca4-86e5-4ddf-9eed-24142073d197 \
-  --ARGO=true \
-  --ARGO_DOMAIN=sb.argo.com \
-  --ARGO_AUTH='gKyflo59sDb5bI_fNr2OWCDnpihMUBIbJ29YsrtS' \
-  --HY2_PORT_HOPPING_RANGE 50000:51000 \
-  --HY2_REALM=true \
-  --REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-  --NODE_NAME_CONFIRM bucket
-```
-</details>
-
-
-### 参数说明
-
-| Key 大小写不敏感（Case Insensitive）| Value |
-| --------------- | ----------- |
-| --LANGUAGE | c=中文;  e=英文 |
-| --CHOOSE_PROTOCOLS | 可多选，如 bcdfk<br> a=全部<br> b=XTLS + reality<br> c=hysteria2<br> d=tuic<br> e=ShadowTLS<br> f=shadowsocks<br> g=trojan<br> h=vmess + ws<br> i=vless + ws + tls<br> j=H2 + reality<br> k=gRPC + reality<br> l=AnyTLS<br> m=NaiveProxy<br> n=Snell v6 |
-| --START_PORT | 100 - 65520 |
-| --PORT_NGINX | n=不需要订阅，或者 100 - 65520 |
-| --SERVER_IP | IPv4 或 IPv6 地址，不需要中括号 |
-| --CDN | 优选 IP 或者域名，如 --CHOOSE_PROTOCOLS 是 [a,h,i] 时需要 |
-| --VMESS_HOST_DOMAIN | vmess sni 域名，如 --CHOOSE_PROTOCOLS 是 [a,h] 时需要 |
-| --VLESS_HOST_DOMAIN | vless sni 域名，如 --CHOOSE_PROTOCOLS 是 [a,i] 时需要 |
-| --UUID_CONFIRM | 全局 UUID；作为协议 UUID/password/PSK |
-| --ARGO | 是否使用 Argo Tunnel，如果是填 true，如果使用 Origin rules，则可以忽略本 Key |
-| --ARGO_DOMAIN | 固定 Argo 域名，即是 Json 或者 Token 隧道的域名 |
-| --ARGO_AUTH | Json, Token 隧道的内容，或者是 Cloudflare API 密钥 |
-| --HY2_PORT_HOPPING_RANGE | hysteria2 跳跃端口范围，如 50000:51000 |
-| --HY2_REALM | [true, false]，是否启用 Hysteria2 Realm，true 为启用。适用于没有公网入口、住宅 NAT、CGNAT 或需要回国打洞的机器，有公网入口时不建议使用，默认为 false |
-| --REALITY_PRIVATE | reality 密钥 |
-| --BIND_INTERFACE | 指定网络出口，绑定到特定网卡，如 eth0<br>值为 default 或不指定则不绑定 |
-| --NODE_NAME_CONFIRM | 节点名 |
-
-
-## 5.Json Argo Tunnel 获取 (推荐)
-
-### 用户可以通过 Cloudflare Json 生成网轻松获取: https://fscarmen.cloudflare.now.cc
-
-<img width="784" alt="image" src="https://github.com/fscarmen/sba/assets/62703343/fb7c6e90-fb3e-4e77-bcd4-407e4660a33c">
-
-如想手动，可以参考，以 Debian 为例，需要用到的命令，[Deron Cheng - CloudFlare Argo Tunnel 试用](https://zhengweidong.com/try-cloudflare-argo-tunnel)
-
-
-## 6.Token Argo Tunnel 方案设置任意端口回源以使用 CDN
-详细教程: [群晖套件：Cloudflare Tunnel 内网穿透中文教程 支持DSM6、7](https://imnks.com/5984.html)
-
-<img width="1510" alt="image" src="https://github.com/fscarmen/sba/assets/62703343/bb2d9c43-3585-4abd-a35b-9cfd7404c87c">
-
-<img width="1638" alt="image" src="https://github.com/fscarmen/sing-box/assets/62703343/a4868388-d6ab-4dc7-929c-88bc775ca851">
-
-
-## 7.使用 Cloudflare API 自动创建 Argo
-
-1. 访问 https://dash.cloudflare.com/profile/api-tokens
-2. API 令牌 > 创建令牌 > 创建自定义令牌
-3. 添加以下权限:
-   - 帐户 > Cloudflare One连接器: Cloudflared > 编辑
-   - 区域 > DNS > 编辑
-4. 帐户资源 > 包括 > 所需账户
-5. 区域资源 > 包括 > 特定区域 > 所需域名
-
-<img width="1336" height="691" alt="image" src="https://github.com/user-attachments/assets/e9c6d946-02ed-48fc-81c4-0fe374461eca" />
-
-
-## 8.Vmess / Vless 方案设置任意端口回源以使用 CDN
-举例子 IPv6: vmess [2a01:4f8:272:3ae6:100b:ee7a:ad2f:1]:10006
-<img width="1052" alt="image" src="https://github.com/fscarmen/sing-box/assets/62703343/bc2df37a-95c4-4ba0-9c84-5d9c745c3a7b">
-
-1. 解析域名
-<img width="1605" alt="image" src="https://github.com/fscarmen/sing-box/assets/62703343/8f38d555-6294-493e-b43d-ff0586c80d61">
-
-2. 设置 Origin rule
-<img width="1556" alt="image" src="https://github.com/fscarmen/sing-box/assets/62703343/164bf255-a6be-40bc-a724-56e13da7a1e6">
-
-
-## 9.Docker 和 Docker compose 安装
-
-### 说明:
-* 支持三种 Argo 类型隧道: 临时 (不需要域名) / Json / Token
-* 最多需要14个连续可用的端口，即 `START_PORT` 至 `START_PORT+13`
-
-<details>
-    <summary> Docker 部署（点击即可展开或收起）</summary>
-<br>
-
-```
-docker run -dit \
-    --pull always \
-    --name sing-box \
-    --network host \
-    -e START_PORT=8800 \
-    -e SERVER_IP=123.123.123.123 \
-    -e XTLS_REALITY=true \
-    -e HYSTERIA2=true \
-    -e TUIC=true \
-    -e SHADOWTLS=true \
-    -e SHADOWSOCKS=true \
-    -e TROJAN=true \
-    -e VMESS_WS=true \
-    -e VLESS_WS=true \
-    -e H2_REALITY=true \
-    -e GRPC_REALITY=true \
-    -e ANYTLS=true \
-    -e SNELL=true \
-    -e UUID=20f7fca4-86e5-4ddf-9eed-24142073d197 \
-    -e CDN=www.csgo.com \
-    -e NODE_NAME=sing-box \
-    -e ARGO_DOMAIN=sb.argo.com \
-    -e ARGO_AUTH='{"AccountTag":"9cc9e3e4d8f29d2a02e297f14f20513a","TunnelSecret":"6AYfKBOoNlPiTAuWg64ZwujsNuERpWLm6pPJ2qpN8PM=","TunnelID":"1ac55430-f4dc-47d5-a850-bdce824c4101"}' \
-    -e REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk \
-    fscarmen/sb
-```
-</details>
-
-<details>
-    <summary> Docker Compose 部署（点击即可展开或收起）</summary>
-<br>
-
-```
-networks:
-    sing-box:
-        name: sing-box
-services:
-    sing-box:
-        image: fscarmen/sb
-        pull_policy: always
-        container_name: sing-box
-        restart: always
-        network_mode: host
-        environment:
-            - START_PORT=8800
-            - SERVER_IP=123.123.123.123
-            - XTLS_REALITY=true
-            - HYSTERIA2=true
-            - TUIC=true
-            - SHADOWTLS=true
-            - SHADOWSOCKS=true
-            - TROJAN=true
-            - VMESS_WS=true
-            - VLESS_WS=true
-            - H2_REALITY=true
-            - GRPC_REALITY=true
-            - ANYTLS=true
-            - SNELL=true
-            - UUID=20f7fca4-86e5-4ddf-9eed-24142073d197
-            - CDN=www.csgo.com
-            - NODE_NAME=sing-box
-            - ARGO_DOMAIN=sb.argo.com
-            - ARGO_AUTH=eyJhIjoiOWNjOWUzZTRkOGYyOWQyYTAyZTI5N2YxNGYyMDUxM2EiLCJ0IjoiOGNiZDA4ZjItNGM0MC00OGY1LTlmZDYtZjlmMWQ0YTcxMjUyIiwicyI6IllXWTFORGN4TW1ZdE5HTXdZUzAwT0RaakxUbGxNMkl0Wm1VMk5URTFOR0l4TkdKayJ9
-            - REALITY_PRIVATE=UPO3FWlg6YDJbASYi7KIESibPec_K46edTvDPbqEYFk
-```
-</details>
-
-
-### 常用指令
-| 功能 | 指令 |
-| ---- | ---- |
-| 查看节点信息 | `docker exec -it sing-box cat list` |
-| 查看容器日志 | `docker logs -f sing-box` |
-| 更新 Sing-box 版本 | `docker exec -it sing-box bash init.sh -v` |
-| 查看容器内存,CPU，网络等资源使用情况 | `docker stats sing-box` |
-| 暂停容器 | docker: `docker stop sing-box`</br> compose: `docker-compose stop` |
-| 停止并删除容器 | docker: `docker rm -f sing-box`</br> compose: `docker-compose down` |
-| 删除镜像 | `docker rmi -f fscarmen/sb:latest` |
-
-### 参数说明
-| 参数 | 是否必须 | 说明 |
-| --- | ------- | --- |
-| -p /tcp | 是 | 宿主机端口范围:容器 sing-box 及 nginx 等 tcp 监听端口 |
-| -p /udp | 是 | 宿主机端口范围:容器 sing-box 及 nginx 等 udp 监听端口 |
-| -e START_PORT | 是 | 起始端口 ，一定要与端口映射的起始端口一致 |
-| -e SERVER_IP | 是 | 服务器公网 IP |
-| -e XTLS_REALITY | 是 |    true 为启用 XTLS + reality，不需要的话删除本参数或填 false |
-| -e HYSTERIA2 | 是 |       true 为启用 Hysteria v2 协议，不需要的话删除本参数或填 false |
-| -e TUIC | 是 |            true 为启用 TUIC 协议，不需要的话删除本参数或填 false |
-| -e SHADOWTLS | 是 |       true 为启用 ShadowTLS 协议，不需要的话删除本参数或填 false |
-| -e SHADOWSOCKS | 是 |     true 为启用 ShadowSocks 协议，不需要的话删除本参数或填 false |
-| -e TROJAN | 是 |          true 为启用 Trojan 协议，不需要的话删除本参数或填 false |
-| -e VMESS_WS | 是 |        true 为启用 VMess over WebSocket 协议，不需要的话删除本参数或填 false |
-| -e VLESS_WS | 是 |        true 为启用 VLess over WebSocket 协议，不需要的话删除本参数或填 false |
-| -e H2_REALITY | 是 |      true 为启用 H2 over reality 协议，不需要的话删除本参数或填 false |
-| -e GRPC_REALITY | 是 |    true 为启用 gRPC over reality 协议，不需要的话删除本参数或填 false |
-| -e ANYTLS | 是 |          true 为启用 AnyTLS 协议，不需要的话删除本参数或填 false |
-| -e SNELL | 是 |           true 为启用 Snell v6 协议，不需要的话删除本参数或填 false |
-| -e UUID | 否 | 不指定的话 UUID 将默认随机生成 |
-| -e CDN | 否 | 优选域名，不指定的话将使用 skk.moe |
-| -e NODE_NAME | 否 | 节点名称，不指定的话将使用 sing-box |
-| -e ARGO_DOMAIN | 否 | Argo 固定隧道域名 , 与 ARGO_DOMAIN 一并使用才能生效 |
-| -e ARGO_AUTH | 否 | Argo 认证信息，可以是 Json， Token 或者 Cloudflare API，与 ARGO_DOMAIN 一并使用才能生效，不指定的话将使用临时隧道 |
-
-
-## 10.Throne 设置 shadowTLS 方法
-1. 复制脚本输出的两个 Throne links 进去
-<img width="630" alt="image" src="https://github.com/fscarmen/sing-box/assets/62703343/db5960f3-63b1-4145-90a5-b01066dd39be">
-
-2. 设置链式代理，并启用
-右键 -> 手动输入配置 -> 类型选择为 "链式代理"。
-
-点击 "选择配置" 后，给节点起个名字，先后选 1-tls-not-use 和 2-ss-not-use，按 enter 或 双击 使用这个服务器。一定要注意顺序不能反了，逻辑为 ShadowTLS -> ShadowSocks。
-
-<img width="408" alt="image" src="https://github.com/fscarmen/sing-box/assets/62703343/753e7159-92f9-4c88-91b5-867fdc8cca47">
-
-
-## 11.主体目录文件及说明
-
-```
-/etc/sing-box/                               # 项目主体目录
-|-- cert                                     # 存放证书文件目录
-|   |-- cert.pem                             # SSL/TLS 安全证书文件（用于大部分协议）
-|   |-- cert_200.pem                         # SSL/TLS 安全证书文件（专用于 NaiveProxy 协议）
-|   `-- private.key                          # SSL/TLS 证书的私钥信息
-|-- conf                                     # sing-box server 配置文件目录
-|   |-- 00_log.json                          # 日志配置文件
-|   |-- 01_outbounds.json                    # 服务端出站配置文件
-|   |-- 03_route.json                        # 路由配置文件（纯直连出站）
-|   |-- 04_experimental.json                 # 缓存与流量统计配置文件
-|   |-- 05_dns.json                          # DNS 规则文件
-|   |-- 06_ntp.json                          # 服务端时间同步配置文件
-|   |-- 07_http_clients.json                 # 专门给 sing-box 内部组件发 HTTP 请求配置文件
-|   |-- 11_xtls-reality_inbounds.json        # Reality vision 协议配置文件
-|   |-- 12_hysteria2_inbounds.json           # Hysteria2 协议配置文件
-|   |-- 13_tuic_inbounds.json                # Tuic V5 协议配置文件 # Hysteria2 协议配置文件
-|   |-- 14_ShadowTLS_inbounds.json           # ShadowTLS 协议配置文件     # Tuic V5 协议配置文件
-|   |-- 15_shadowsocks_inbounds.json         # Shadowsocks 协议配置文件
-|   |-- 16_trojan_inbounds.json              # Trojan 协议配置文件
-|   |-- 17_vmess-ws_inbounds.json            # vmess + ws 协议配置文件
-|   |-- 18_vless-ws-tls_inbounds.json        # vless + ws + tls 协议配置文件
-|   |-- 19_h2-reality_inbounds.json          # Reality http2 协议配置文件
-|   |-- 20_grpc-reality_inbounds.json        # Reality gRPC 协议配置文件
-|   |-- 21_anytls_inbounds.json              # AnyTLS 协议配置文件
-|   |-- 22_naive_inbounds.json               # NaiveProxy 协议配置文件
-|   `-- 23_snell-v6_inbounds.json            # Snell v6 协议配置文件
-|-- logs
-|   `-- box.log                              # sing-box 运行日志文件
-|-- subscribe                                # sing-box server 配置文件目录
-|   |-- qr                                   # Throne / V2rayN / Shadowrock 订阅二维码
-|   |-- shadowrocket                         # Shadowrock 订阅文件
-|   |-- proxies                              # Clash proxy provider 订阅文件
-|   |-- clash                                # Clash 订阅文件1
-|   |-- clash2                               # Clash 订阅文件2
-|   |-- sing-box-pc                          # SFM 订阅文件1
-|   |-- sing-box-phone                       # SFI / SFA 订阅文件1
-|   |-- sing-box2                            # SFI / SFA / SFM 订阅文件2
-|   |-- v2rayn                               # V2rayN 订阅文件
-|   |-- throne                               # Throne 订阅文件
-|   `-- dynamic                              # 动态订阅目录（sb -d 开启动态订阅后生成）
-|       |-- render.sh                        # CGI 渲染脚本，按请求 Host 实时生成订阅（主脚本现场生成）
-|       |-- fcgiwrap-start                   # fcgiwrap 幂等启动脚本
-|       |-- fcgiwrap.sock                    # FastCGI 通信 socket
-|       |-- fcgiwrap.pid                     # fcgiwrap 进程 PID 文件
-|       |-- meta.env                         # 渲染元数据：固定隧道域名 / 公网 WAN4 / WAN6
-|       `-- templates                        # 只读订阅模板目录（占位符版，动态请求不回写）
-|           |-- proxies                      # Clash proxy provider 节点模板
-|           |-- clash                        # Clash 完整配置模板
-|           |-- clash2                       # Clash 内联节点模板
-|           |-- shadowrocket                 # ShadowRocket 订阅模板
-|           |-- v2rayn                        # V2rayN 订阅模板
-|           |-- throne                       # Throne 订阅模板
-|           |-- sing-box                     # sing-box 客户端配置模板
-|           `-- src                          # clash / clash2 / sing-box 原始模板源文件
-|-- cache.db                                 # sing-box 缓存文件
-|-- nginx.conf                               # 用于订阅服务的 nginx 配置文件
-|-- language                                 # 存放脚本语言文件，E 为英文，C 为中文
-|-- list                                     # 节点信息列表
-|-- sing-box                                 # sing-box 主程序
-|-- cloudflared                              # Argo tunnel 主程序
-|-- tunnel.json                              # Argo tunnel Json 信息文件
-|-- tunnel.yml                               # Argo tunnel 配置文件
-|-- sb.sh                                    # 快捷方式脚本文件
-|-- jq                                       # 命令行 json 处理器二进制文件
-`-- qrencode                                 # QR 码编码二进制文件
-```
-
-
-## 12.自签证书在不同客户端中的处理方式对比
-
-| 客户端 / 工具 | 使用的证书验证方式 | SNI 是否必须匹配 SAN | 是否依赖完整证书链 | 使用的 Hash / 指纹类型 | SNI 用途说明 |
-|---------------|---------------------|------------------------|------------------------|--------------------------|----------------------|
-| **V2RayN** | 标准 X.509 证书链验证 | **是**（必须匹配） | ✔ 是 | 不使用指纹 | 用于 TLS Hostname 验证（必须与 SAN 一致） |
-| **Throne** | 标准 X.509 证书链验证 | **是**（必须匹配） | ✔ 是 | 不使用指纹 | 用于 TLS Hostname 验证（必须与 SAN 一致） |
-| **ShadowRocket** | 对证书 **DER 全内容** 做 SHA-256 | ✖ 不需要匹配 | ✖ 不依赖证书链 | **SHA-256(DER)** | 仅用于伪装，可为空或任意域名 |
-| **Clash Verge / Meta** | 对证书 **DER 全内容** 做 SHA-256 | ✖ 不需要匹配 | ✖ 不依赖证书链 | **SHA-256(DER)** | 仅用于伪装，可为空或任意域名 |
-| **Sing-box** | 仅验证 SPKI 公钥（SPKI pin） | ✖ 不需要匹配 | ✖ 不依赖证书链 | **SHA-256(SPKI Base64)** | 仅用于伪装，可为空或任意域名 |
-
-
-### 结论：
- - **V2RayN、Throne 必须要 SAN = SNI**，否则“x509: cannot validate certificate because it doesn't contain IP SAN”。
- - **ShadowRocket、Clash、Sing-box、HY2、TUIC 完全不需要 SAN**，因为用的是指纹机制。
+# sing-box 多协议与中转管理脚本
+
+基于 [fscarmen/sing-box](https://github.com/fscarmen/sing-box)（`v1.3.31`）二次开发优化的 `sing-box` 一键部署与运维脚本，遵循 GNU GPL v3 协议。
+
+相比原版的核心改进：
+- **纯净轻量化**：彻底移除过时的内置 WARP 链式代理解锁与运行统计上报，服务端默认纯直连出站。
+- **中转 / 落地一体化**：内置 `sb -o` 中转出口管理，支持直接粘贴落地机分享链接、一键全局中转、Geosite 规则集分流（内置 DMM / AI 等预设）、延迟测速与 `urltest` 故障自动切换；新增 `sb -p` 极简落地机模式。
+- **纯 IPv6 深度修复**：修复并发镜像探测竞态误杀、版本号校验污染、多代理自动故障转移及本地 `sb` 离线缓存兜底。
+- **运维与安全增强**：内置 `sb -i` 实时连接/流量/日志排查、`sb -m` 配置一键备份迁移、`sb -d` 出站 IP/DNS 策略切换与私有 IP/BT 防滥用拦截；修复多项原版脚本 Bug。
 
 ---
 
-### X.509 自签证书结构与不同指纹方式包含内容对比
+## 1. 快速安装
 
-| 证书字段 / 内容 | X.509 完整证书（TBSCert + Sig） | DER 指纹（SHA-256(DER)） | 公钥 SPKI（Subject Public Key Info） |
-|----------------|---------------------------------|----------------------------|-------------------------------------|
-| Version | ✔ 包含 | ✔ 包含 | ✖ 不包含 |
-| Serial Number | ✔ | ✔ | ✖ |
-| Issuer | ✔ | ✔ | ✖ |
-| Validity (Not Before / Not After) | ✔ | ✔ | ✖ |
-| Subject（CN） | ✔ | ✔ | ✖ |
-| **SAN（Subject Alternative Name）** | ✔ | ✔ | ✖ |
-| Extensions | ✔ | ✔ | ✖ |
-| **Public Key** | ✔ | ✔ | ✔ |
-| 公钥算法（ECC/P256 等） | ✔ | ✔ | ✔ |
-| EC 曲线参数 | ✔ | ✔ | ✔ |
-| Signature Algorithm | ✔ | ✔ | ✖ |
-| Signature Value | ✔ | ✔ | ✖ |
-| 用途场景 | V2RayN / Throne | ShadowRocket / Clash | Sing-box / Hysteria2 / TUIC |
+- **常规双栈 / IPv4 主机：**
+  ```bash
+  bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh)
+  ```
+
+- **纯 IPv6 主机（无法直连 GitHub 时）：**
+  ```bash
+  bash <(wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh)
+  ```
+
+- **极简落地机安装（仅装轻量协议，不装 Nginx / Argo / 订阅）：**
+  ```bash
+  bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) -p
+  ```
+
+- **安装完成后随时呼出菜单：**
+  ```bash
+  sb
+  ```
+
+> 支持系统：Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Alpine（支持 systemd 与 OpenRC，兼容 amd64 / arm64 / s390x）。
 
 ---
 
-### 指纹方式说明
+## 2. 常用快捷命令
 
-#### **1. X.509 证书链验证**
-- 完整验证 CA → Leaf 证书
-- **必须要求：SNI = SAN 中的一个 DNS 名称**
-- 不允许 SAN 不匹配或缺失
-- 用于：**V2RayN / Throne**
+| 命令 | 说明 |
+| :--- | :--- |
+| `sb` | 打开主管理菜单 |
+| `sb -n` | 查看所有节点链接、订阅地址与二维码 |
+| `sb -o` | **中转 / 落地出口管理**（粘贴链接、全局中转、Geosite/域名/入站分流、测速、故障切换） |
+| `sb -i` | **实时监控与排障**（累计流量、活跃连接命中规则与出口、查看/清空日志） |
+| `sb -d` | **修改节点与系统配置**（端口、SNI、UUID、出站 IP/DNS 策略、私有 IP/BT 防滥用、静态/动态订阅等） |
+| `sb -m` | **配置一键备份与恢复迁移**（导出/导入 `.tar.gz`） |
+| `sb -p` | **极简落地机安装模式**（仅装 VLESS-Reality / SS-2022 / Hysteria2） |
+| `sb -r` | 增删已安装的入站协议 |
+| `sb -s` | 启动 / 停止 `sing-box` |
+| `sb -a` | 启动 / 停止 Argo 隧道 |
+| `sb -t` | 切换 Argo 临时 / 固定隧道 |
+| `sb -v` | 升级或切换 `sing-box` / `cloudflared` 版本 |
+| `sb -u` | 卸载全部组件 |
 
-#### **2. SHA-256(DER) 指纹**
-- 对证书 **整体 DER（二进制）内容** 计算 SHA-256
-- 包含所有字段（版本、序列号、Subject、SAN、扩展、公钥、签名等）
-- **任意字段变化 → 指纹都会改变**
-- 用于：**ShadowRocket / Clash Mihomo**
+---
 
-#### **3. SHA-256(SPKI) 指纹**
-- 只包含 **公钥 SPKI（Subject Public Key Info）**
-- 证书重新签发、变更 Issuer、Subject、SAN **都不会改变**
-- 更稳定、更适合自签证书
-- 用于：**Sing-box**
+## 3. 中转机 / 落地机典型用法
 
+### 场景 A：搭建极简落地机
+在落地机执行 `bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) -p`，按提示选择轻量协议（推荐 `VLESS + Reality` 或 `Shadowsocks 2022`），装完复制输出的分享链接即可。
 
-## 13.鸣谢下列作者的文章和项目:
-千歌 sing-box 模板: https://github.com/chika0801/sing-box-examples
-zmlu 的 Cloudflare Tunnel 管理脚本: https://raw.githubusercontent.com/zmlu/sba/main/tunnel.sh
+### 场景 B：中转机全局转发到落地机
+在中转机运行 `sb -o`：
+1. 选择 `1`（添加落地机出口），直接粘贴落地机分享链接（支持 `vless://`、`ss://`、`hy2://`、`tuic://`、`trojan://`、`socks5://`、`http://` 或原生 sing-box outbound JSON）。
+2. 提示「是否立即设为全局中转出口」时直接回车即可生效。
 
-## 14.感谢赞助商
+### 场景 C：按网站分流（如 DMM 走日本、AI 走家宽，其余直连）
+在中转机运行 `sb -o`：
+1. 选择 `1`，依次粘贴日本落地机（命名为 `jp`）和家宽落地机（命名为 `ai-home`），提示是否设全局时输入 `n` 保持默认直连。
+2. 选择 `3`（按 Geosite 规则集分流）：
+   - 选出口 `jp` → 选预设 `1. DMM (geosite-dmm)`；
+   - 选出口 `ai-home` → 选预设 `2. AI 国际全集 (geosite-category-ai-!cn)`；
+   - 也支持选 `6` 自定义输入任意 `geosite`（如 `netflix,disney,bahamut,abema`），远程 `.srs` 自动适配 `GH_PROXY`。
+3. 进阶操作：
+   - 选 `6` 可**单条删除**某条分流规则；
+   - 选 `7` 可**测试各落地机延迟与连通性**；
+   - 选 `8` 可创建 **`urltest` 故障自动切换组**（主落地断线自动切备用或回退直连）；
+   - 运行 `sb -i` 可实时查看每条连接命中了哪条规则、走了哪个出口。
 
-### 🚀 Sponsored by SharonNetworks
+> 所有中转配置写入独立的 `08_relay_outbound.json` 与 `09_relay_route.json`，升级/重置基础配置时不会被覆盖；每次修改均自动执行 `sing-box check`，校验失败自动回滚。
 
-<a href="https://sharon.io/">
-  <img src="https://framerusercontent.com/assets/3bMljdaUFNDFvMzdG9S0NjYmhSY.png" width="30%" alt="sharon.io">
-</a>
+---
 
-本项目的构建与发布环境由 SharonNetworks 提供支持 —— 专注亚太顶级回国优化线路，高带宽、低延迟直连中国大陆，内置强大高防 DDoS 清洗能力。
+## 4. 支持的入站协议与订阅
 
-SharonNetworks 为您的业务起飞保驾护航！
+- **入站协议**：VLESS + Reality（TCP / H2 / gRPC）、Hysteria2（支持端口跳跃与 Realm）、TUIC v5、Shadowsocks-2022、Trojan、AnyTLS、ShadowTLS v3、VMess + WS、VLESS + WS + TLS（支持 Cloudflare CDN 与 Argo 隧道）、NaiveProxy、Snell v6。
+- **订阅输出**：支持 V2rayN / Shadowrocket / Clash (Mihomo) / sing-box 客户端订阅与二维码；支持在 `sb -d` 中开启**动态订阅**（按请求 Host 实时渲染节点地址，适配多 IP 与 IPv6 地址池）。
 
-#### ✨ 服务优势
+---
 
-* 亚太三网回程优化直连中国大陆，下载快到飞起
-* 超大带宽 + 抗攻击清洗服务，保障业务安全稳定
-* 多节点覆盖（香港、新加坡、日本、台湾、韩国）
-* 高防护力、高速网络；港/日/新 CDN 即将上线
+## 5. 无人值守安装
 
-想体验同款构建环境？欢迎 [访问 Sharon 官网](https://sharon.io) 或 [加入 Telegram 群组](https://t.me/SharonNetwork) 了解更多并申请赞助。
+支持通过 [config.conf](config.conf) 或命令行参数批量部署，完整参数说明见 [config.conf](config.conf)。
 
-### 感谢 vps.town 对本项目的支持和赞助
+- **通过配置文件安装：**
+  ```bash
+  wget -O config.conf https://raw.githubusercontent.com/huai3/sing-box/main/config.conf
+  # 按需编辑 config.conf 后执行：
+  bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) -f config.conf
+  ```
 
-<a href="https://vps.town" align="left">
-  <img src="https://vps.town/static/images/sponsor.png" alt="Sponsor" width="30%">
-</a>
+- **命令行直接带中转出口安装示例：**
+  ```bash
+  bash <(wget -qO- https://raw.githubusercontent.com/huai3/sing-box/main/sing-box.sh) \
+    --CHOOSE_PROTOCOLS bf --START_PORT 20000 \
+    --RELAY_URI "vless://..." --RELAY_MODE global
+  ```
+  > 如只需对特定站点走落地机，可传 `--RELAY_MODE none --RELAY_GEOSITES "dmm,ai"` 或 `--RELAY_DOMAINS "openai.com,netflix.com"`。
 
-体验 VPS.Town 的速度、稳定性和安全性一体化云计算解决方案 - 专为推动您的业务创新而设计。
+---
 
-#### ✨ 服务优势
+## 6. 核心目录结构
 
-* 安全的记忆。您值得信赖的伙伴
+所有配置位于 `/etc/sing-box/`，采用 `sing-box -C /etc/sing-box/conf/` 多文件自动合并：
 
-* 坚如磐石的数据中心。高枕无忧
+```text
+/etc/sing-box/
+├── sing-box                     # 核心二进制
+├── jq                           # JSON 处理工具
+├── sb_local.sh                  # sb 命令本地离线兜底脚本
+├── logs/box.log                 # 运行日志
+├── subscribe/                   # 静态订阅文件与二维码
+└── conf/
+    ├── 00_log.json              # 日志配置
+    ├── 01_outbounds.json        # 默认 direct 出站（含网卡绑定）
+    ├── 03_route.json            # 基础路由（sniff）
+    ├── 04_experimental.json     # cache_file 与本地 clash_api
+    ├── 05_dns.json              # DNS 与出站 IP 策略
+    ├── 08_security_route.json   # 安全防滥用拦截（私有 IP / BT，sb -d 管理）
+    ├── 08_relay_outbound.json   # 中转落地机出口与 urltest 组（sb -o 管理）
+    ├── 09_relay_route.json      # 中转分流规则与 rule_set（sb -o 管理）
+    └── 10_*_inbounds.json       # 各协议入站配置
+```
 
+---
 
-## 15.免责声明
-* 本程序仅供学习了解, 非盈利目的，请于下载后 24 小时内删除, 不得用作任何商业用途, 文字、数据及图片均有所属版权, 如转载须注明来源。
-* 使用本程序必循遵守部署免责声明。使用本程序必循遵守部署服务器所在地、所在国家和用户所在国家的法律法规, 程序作者不对使用者任何不当行为负责。
+## 7. 更新日志
 
+<details>
+<summary>点击展开 / 收起更新历史（Fork 后的改动）</summary>
 
-## 16.开源证书
-* 本项目严格遵守 GNU GPL v3 许可证 [LICENSE](LICENSE)。
-* 任何形式的复制、分发、修改或衍生使用，必须完整保留原版权声明、许可证文本，并以相同许可证开源发布。违反此条款（如闭源使用、商业独占或未开源修改版）将被视为抄袭，作者保留追究法律责任的权利。
-* 鼓励社区贡献，但请通过 Pull Request 提交。
+- **2026-11-21**
+  - 同步上游 `v1.3.31` 修订中的 3 项优化：`check_system_ip()` 会话内缓存、`check_install()` 统一以 `nginx.conf` 判定订阅状态、动态订阅模板优先复用本地缓存。
+  - 新增 `sb -o` **中转 / 落地出口管理**：支持粘贴分享链接或原生 JSON、全局中转、Geosite 规则集分流（内置 DMM / AI / Netflix / Disney+ / TikTok 预设及自定义）、按域名/入站分流、单条删除规则、延迟测速与 `urltest` 故障自动切换组；支持 `config.conf` / CLI 无交互参数。
+  - 新增 `sb -i` **实时监控与排障**（基于 `clash_api` 查看流量、活跃连接命中规则及日志）。
+  - 新增 `sb -m` **配置一键备份与恢复迁移**。
+  - `sb -d` 新增 **出站 IP / DNS 策略一键切换** 与 **安全防滥用拦截开关**（私有 IP / BitTorrent）。
+  - 新增 `sb -p` **极简落地机安装预设**。
+- **2026-11-18**
+  - Fork 自 `fscarmen/sing-box`（`v1.3.31`），移除全部内置 WARP 链式代理解锁 ChatGPT 与统计上报逻辑。
+  - 修复纯 IPv6 主机下 GitHub 代理并发探测竞态（`wait -n` 误杀可用双栈镜像）、版本号校验污染与内核下载失败问题，增加多代理自动故障转移及 `sb` 本地离线兜底。
+  - 修复 `sb -d` 误替换二进制文件、修改起始端口冲突、Reality 私钥外发第三方 API 改本地 OpenSSL 推导、`config.conf` 无交互解析、Alpine BusyBox `base64` 兼容、Docker 复用已有 Argo Tunnel 等多项 Bug。
+
+</details>
+
+---
+
+## 8. 开源协议与致谢
+
+- 本项目基于 [fscarmen/sing-box](https://github.com/fscarmen/sing-box) 二次开发，感谢原作者的开源贡献。
+- 本项目严格遵守 GNU GPL v3 许可证，详见 [LICENSE](LICENSE)。
