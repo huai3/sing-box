@@ -446,8 +446,8 @@ E[216]="Disable relay & clear routing rules (revert to pure direct)"
 C[216]="一键关闭中转并清空路由规则 (恢复纯直连)"
 E[217]="View current relay config JSON"
 C[217]="查看当前中转配置详情"
-E[218]="Paste landing node URI (vless/ss/hy2/tuic/trojan/socks5/http) or sing-box outbound JSON:"
-C[218]="请粘贴落地机分享链接 (vless/ss/hy2/tuic/trojan/socks5/http) 或 sing-box outbound JSON:"
+E[218]="Paste landing node URI (vless/ss/anytls/hy2/tuic/trojan/socks5/http) or sing-box outbound JSON:"
+C[218]="请粘贴落地机分享链接 (vless/ss/anytls/hy2/tuic/trojan/socks5/http) 或 sing-box outbound JSON:"
 E[219]="Outbound tag (Enter for default:"
 C[219]="出口标签名 (回车默认:"
 E[220]="Failed to parse URI/JSON. Please check the format."
@@ -1277,6 +1277,57 @@ relay_parse_uri() {
             transport: { type: "grpc", service_name: $svc }
           }
           else {} end)
+      '
+      ;;
+
+    anytls)
+      [[ "$rest" != *@* ]] && return 1
+      local password hostport
+      password=$(relay_url_decode "${rest%%@*}")
+      hostport="${rest#*@}"
+      relay_split_host_port "$hostport" || return 1
+      local sni insecure fp tls_cert hpkp idle_chk idle_to min_idle
+      sni=$(relay_get_query_param "$query" "sni" || relay_get_query_param "$query" "peer" || true)
+      insecure=$(relay_get_query_param "$query" "insecure" || relay_get_query_param "$query" "allowInsecure" || true)
+      fp=$(relay_get_query_param "$query" "fp" || true)
+      tls_cert=$(relay_get_query_param "$query" "tls_certificate" || true)
+      hpkp=$(relay_get_query_param "$query" "hpkp" || true)
+      idle_chk=$(relay_get_query_param "$query" "idle_session_check_interval" || true)
+      idle_to=$(relay_get_query_param "$query" "idle_session_timeout" || true)
+      min_idle=$(relay_get_query_param "$query" "min_idle_session" || true)
+      # 若链接携带 hpkp（Shadowrocket/V2rayN 自签格式）且未附带 PEM 证书，sing-box 需跳过证书链校验
+      if [ -z "$tls_cert" ] && [ -n "$hpkp" ] && [ -z "$insecure" ]; then
+        insecure="1"
+      fi
+      jq_exec -n \
+        --arg tag "$out_tag" \
+        --arg server "$RELAY_HOST" \
+        --argjson port "$RELAY_PORT" \
+        --arg password "$password" \
+        --arg sni "${sni:-$RELAY_HOST}" \
+        --arg insecure "$insecure" \
+        --arg fp "$fp" \
+        --arg tls_cert "$tls_cert" \
+        --arg idle_chk "$idle_chk" \
+        --arg idle_to "$idle_to" \
+        --arg min_idle "$min_idle" '
+        {
+          type: "anytls",
+          tag: $tag,
+          server: $server,
+          server_port: $port,
+          password: $password,
+          tls: (
+            { enabled: true, server_name: $sni }
+            + (if $tls_cert != "" then { certificate: $tls_cert }
+               elif ($insecure == "1" or $insecure == "true") then { insecure: true }
+               else {} end)
+            + (if $fp != "" then { utls: { enabled: true, fingerprint: $fp } } else {} end)
+          )
+        }
+        + (if $idle_chk != "" then { idle_session_check_interval: $idle_chk } else {} end)
+        + (if $idle_to != "" then { idle_session_timeout: $idle_to } else {} end)
+        + (if ($min_idle | test("^[0-9]+$")) then { min_idle_session: ($min_idle | tonumber) } else {} end)
       '
       ;;
 
@@ -2239,15 +2290,19 @@ install_landing_minimal() {
   hint "\n $(text 280)"
   hint " 1. VLESS + Reality (推荐，抗封锁且性能好)"
   hint " 2. Shadowsocks 2022 (最轻量，极适合中转对接)"
-  hint " 3. Hysteria2 (UDP 高速落地)"
-  hint " 4. VLESS + Reality + Shadowsocks 2022 (双协议组合)"
+  hint " 3. AnyTLS (轻量 TLS 复用，抗特征检测)"
+  hint " 4. Hysteria2 (UDP 高速落地)"
+  hint " 5. VLESS + Reality + AnyTLS (双协议组合)"
+  hint " 6. VLESS + Reality + Shadowsocks 2022 (双协议组合)"
   local l_pick=""
   reading "\n $(text 24) " l_pick
   case "$l_pick" in
     1|"") CHOOSE_PROTOCOLS='b' ;;
     2) CHOOSE_PROTOCOLS='f' ;;
-    3) CHOOSE_PROTOCOLS='c' ;;
-    4) CHOOSE_PROTOCOLS='bf' ;;
+    3) CHOOSE_PROTOCOLS='l' ;;
+    4) CHOOSE_PROTOCOLS='c' ;;
+    5) CHOOSE_PROTOCOLS='bl' ;;
+    6) CHOOSE_PROTOCOLS='bf' ;;
     *) CHOOSE_PROTOCOLS='b' ;;
   esac
   IS_FAST_INSTALL='is_fast_install'
