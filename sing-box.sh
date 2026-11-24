@@ -2288,22 +2288,22 @@ manage_backup() {
 # 极简落地机安装预设 (sb -p)：跳过 Nginx / 订阅 / Argo，仅装轻量协议
 install_landing_minimal() {
   hint "\n $(text 280)"
-  hint " 1. VLESS + Reality (推荐，抗封锁且性能好)"
+  hint " 1. Shadowsocks 2022 + AnyTLS + Hysteria2 (推荐：三协议黄金落地组合)"
   hint " 2. Shadowsocks 2022 (最轻量，极适合中转对接)"
   hint " 3. AnyTLS (轻量 TLS 复用，抗特征检测)"
   hint " 4. Hysteria2 (UDP 高速落地)"
-  hint " 5. VLESS + Reality + AnyTLS (双协议组合)"
-  hint " 6. VLESS + Reality + Shadowsocks 2022 (双协议组合)"
+  hint " 5. Shadowsocks 2022 + AnyTLS (轻量 TCP 双协议)"
+  hint " 6. VLESS + Reality (直连应急备用)"
   local l_pick=""
   reading "\n $(text 24) " l_pick
   case "$l_pick" in
-    1|"") CHOOSE_PROTOCOLS='b' ;;
+    1|"") CHOOSE_PROTOCOLS='flc' ;;
     2) CHOOSE_PROTOCOLS='f' ;;
     3) CHOOSE_PROTOCOLS='l' ;;
     4) CHOOSE_PROTOCOLS='c' ;;
-    5) CHOOSE_PROTOCOLS='bl' ;;
-    6) CHOOSE_PROTOCOLS='bf' ;;
-    *) CHOOSE_PROTOCOLS='b' ;;
+    5) CHOOSE_PROTOCOLS='fl' ;;
+    6) CHOOSE_PROTOCOLS='b' ;;
+    *) CHOOSE_PROTOCOLS='flc' ;;
   esac
   IS_FAST_INSTALL='is_fast_install'
   START_PORT=${START_PORT:-"$START_PORT_DEFAULT"}
@@ -7330,6 +7330,37 @@ snell://${UUID[23]}@${SERVER_IP_1}:${PORT_SNELL}?version=6&mode=default&reuse=1#
 
   echo -n "$THRONE_SUBSCRIBE" | sed -E '/^[ ]*#|^--/d' | sed '/^$/d' | b64_nowrap > ${SUB_OUT_DIR}/throne
 
+  # 生成 Honk / 通用标准分享链接（自签证书协议默认带 insecure=1 / allowInsecure=1，可直接复制到 honk / dae / sb -o）
+  local HONK_SUBSCRIBE=""
+  [ -n "$PORT_XTLS_REALITY" ] && HONK_SUBSCRIBE+="
+----------------------------
+vless://${UUID[11]}@${SERVER_IP_1}:${PORT_XTLS_REALITY}?security=reality&sni=${TLS_SERVER}&fp=${FINGER_PRINT}&pbk=${REALITY_PUBLIC[11]}&type=tcp${VISION_FLOW}&encryption=none#${NODE_NAME[11]// /%20}%20${NODE_TAG[0]}"
+  if [ -n "$PORT_HYSTERIA2" ]; then
+    local HONK_HY2_PARAMS="sni=${TLS_SERVER}&insecure=1"
+    [[ -n "$PORT_HOPPING_START" && -n "$PORT_HOPPING_END" ]] && HONK_HY2_PARAMS+="&mport=${PORT_HOPPING_START}-${PORT_HOPPING_END}"
+    HONK_SUBSCRIBE+="
+----------------------------
+hysteria2://${UUID[12]}@${SERVER_IP_1}:${PORT_HYSTERIA2}?${HONK_HY2_PARAMS}#${NODE_NAME[12]// /%20}%20${NODE_TAG[1]}"
+  fi
+  [ -n "$PORT_TUIC" ] && HONK_SUBSCRIBE+="
+----------------------------
+tuic://${UUID[13]}:${TUIC_PASSWORD}@${SERVER_IP_1}:${PORT_TUIC}?congestion_control=${TUIC_CONGESTION_CONTROL}&alpn=h3&sni=${TLS_SERVER}&udp_relay_mode=native&allow_insecure=1#${NODE_NAME[13]// /%20}%20${NODE_TAG[2]}"
+  [ -n "$PORT_SHADOWSOCKS" ] && HONK_SUBSCRIBE+="
+----------------------------
+ss://$(echo -n "${SHADOWSOCKS_METHOD}:${SHADOWSOCKS_PASSWORD}" | b64_nowrap)@${SERVER_IP_1}:${PORT_SHADOWSOCKS}#${NODE_NAME[15]// /%20}%20${NODE_TAG[4]}"
+  [ -n "$PORT_TROJAN" ] && HONK_SUBSCRIBE+="
+----------------------------
+trojan://${TROJAN_PASSWORD}@${SERVER_IP_1}:${PORT_TROJAN}?security=tls&sni=${TLS_SERVER}&allowInsecure=1&fp=${FINGER_PRINT}&type=tcp#${NODE_NAME[16]// /%20}%20${NODE_TAG[5]}"
+  [ -n "$PORT_H2_REALITY" ] && HONK_SUBSCRIBE+="
+----------------------------
+vless://${UUID[19]}@${SERVER_IP_1}:${PORT_H2_REALITY}?security=reality&sni=${TLS_SERVER}&alpn=h2&fp=${FINGER_PRINT}&pbk=${REALITY_PUBLIC[19]// /%20}&type=http&encryption=none#${NODE_NAME[19]// /%20}%20${NODE_TAG[8]}"
+  [ -n "$PORT_GRPC_REALITY" ] && HONK_SUBSCRIBE+="
+----------------------------
+vless://${UUID[20]}@${SERVER_IP_1}:${PORT_GRPC_REALITY}?security=reality&sni=${TLS_SERVER}&fp=${FINGER_PRINT}&pbk=${REALITY_PUBLIC[20]}&type=grpc&serviceName=grpc&encryption=none#${NODE_NAME[20]// /%20}%20${NODE_TAG[9]}"
+  [ -n "$PORT_ANYTLS" ] && HONK_SUBSCRIBE+="
+----------------------------
+anytls://${UUID[21]}@${SERVER_IP_1}:${PORT_ANYTLS}?sni=${TLS_SERVER}&insecure=1#${NODE_NAME[21]// /%20}%20${NODE_TAG[10]}"
+
   # 生成 Sing-box 订阅文件
   [ -n "$PORT_XTLS_REALITY" ] &&
   local OUTBOUND_REPLACE+=" { \"type\": \"vless\", \"tag\": \"${NODE_NAME[11]} ${NODE_TAG[0]}\", \"server\":\"${SERVER_IP}\", \"server_port\":${PORT_XTLS_REALITY}, \"uuid\":\"${UUID[11]}\", \"flow\":\"${FLOW}\", \"tls\":{ \"enabled\":true, \"server_name\":\"${TLS_SERVER}\", \"utls\":{ \"enabled\":true, \"fingerprint\":\"${FINGER_PRINT}\" }, \"reality\":{ \"enabled\":true, \"public_key\":\"${REALITY_PUBLIC[11]}\", \"short_id\":\"\" } }, \"multiplex\": { \"enabled\": ${MULTIPLEX_PADDING_ENABLED}, \"protocol\": \"h2mux\", \"max_connections\": 8, \"min_streams\": 16, \"padding\": ${MULTIPLEX_PADDING_ENABLED}, \"brutal\":{ \"enabled\":${VISION_BRUTAL_ENABLED}, \"up_mbps\":1000, \"down_mbps\":1000 } } }," &&
@@ -7502,10 +7533,10 @@ $(info "$(sed '1d' <<< "${CLASH_SUBSCRIBE}")")
 *******************************************
 ┌────────────────┐
 │                │
-│     $(warning "Throne")     │
+│ $(warning "Honk / Universal") │
 │                │
 └────────────────┘
-$(hint "${THRONE_SUBSCRIBE}")
+$(hint "${HONK_SUBSCRIBE}")
 
 *******************************************
 ┌────────────────┐
@@ -7534,9 +7565,6 @@ $SUBSCRIBE_ADDRESS/${UUID_CONFIRM}/qr
 
 V2rayN $(text 80):
 $SUBSCRIBE_ADDRESS/${UUID_CONFIRM}/v2rayn")
-
-$(hint "Throne $(text 80):
-$SUBSCRIBE_ADDRESS/${UUID_CONFIRM}/throne")
 
 $(hint "Clash $(text 80):
 $SUBSCRIBE_ADDRESS/${UUID_CONFIRM}/clash
