@@ -572,6 +572,20 @@ E[279]="Configuration restored and sing-box restarted! If migrated to a new serv
 C[279]="配置已恢复并重启 sing-box！如果是迁移到新机器，可运行 sb -d 修改服务器 IP。"
 E[280]="Select lightweight protocol(s) for landing server:"
 C[280]="请选择落地机要安装的轻量协议:"
+E[281]="Benchmarking regional Reality SNI candidates (TLSv1.3 + h2 + X25519)..."
+C[281]="正在并发测速当前地区的 Reality SNI 候选域名 (TLSv1.3 + h2 + X25519)..."
+E[282]="Detected VPS region:"
+C[282]="识别到当前 VPS 地区:"
+E[283]="Enter number to select, or type a custom domain directly (Enter to cancel):"
+C[283]="请输入编号选择，或直接输入自定义域名 (直接回车取消):"
+E[284]="Verifying custom SNI:"
+C[284]="正在实时复检自定义 SNI:"
+E[285]="SNI verification passed (TLSv1.3 + h2 + X25519)."
+C[285]="SNI 复检通过 (TLSv1.3 + h2 + X25519)。"
+E[286]="SNI check warning:"
+C[286]="SNI 复检未完全通过:"
+E[287]="Continue using this domain anyway? [y/N] (default N):"
+C[287]="仍要强制使用该域名吗? [y/N] (默认 N):"
 
 # 自定义字体彩色，read 函数
 warning() { echo -e "\033[31m\033[01m$*\033[0m"; }  # 红色
@@ -2316,6 +2330,162 @@ install_landing_minimal() {
   create_shortcut
 }
 
+# 根据 check_system_ip 返回的国家名映射为地区代码（用于分地区 Reality SNI 推荐）
+detect_vps_region() {
+  local raw="${COUNTRY4:-${COUNTRY6:-}}"
+  case "$raw" in
+    *Taiwan*|*台湾*|*台灣*|TW) echo "TW" ;;
+    *Japan*|*日本*|JP) echo "JP" ;;
+    *"Hong Kong"*|*香港*|HK) echo "HK" ;;
+    *Singapore*|*新加坡*|SG) echo "SG" ;;
+    *"United States"*|*美国*|*美國*|US) echo "US" ;;
+    *Canada*|*加拿大*|CA) echo "CA" ;;
+    *Korea*|*韩国*|*韓國*|KR) echo "KR" ;;
+    *"United Kingdom"*|*Britain*|*英国*|*英國*|GB|UK) echo "GB" ;;
+    *Germany*|*France*|*Netherlands*|*Finland*|*Sweden*|*Switzerland*|*Italy*|*Spain*|*Poland*|*Austria*|*Ireland*|*Luxembourg*|*德国*|*法国*|*荷兰*|*芬兰*|*瑞典*|*瑞士*|*意大利*|*西班牙*|*波兰*|*奥地利*|*爱尔兰*|*卢森堡*|DE|FR|NL|FI|SE|CH|IT|ES|PL|AT|IE|LU|EU) echo "EU" ;;
+    *) echo "GLOBAL" ;;
+  esac
+}
+
+# 单域名 Reality SNI 实时复检（TLSv1.3 + h2 + X25519 + 非 Cloudflare + 握手延迟 ms）
+# 成功返回 0 并 stdout 输出延迟毫秒数；失败返回 1 并 stderr 输出原因
+verify_reality_sni() {
+  local domain="$1"
+  local t0 t1 ms out
+  t0=$(date +%s%3N 2>/dev/null || echo 0)
+  if command -v timeout >/dev/null 2>&1; then
+    out=$(echo | timeout 4 openssl s_client -connect "${domain}:443" -servername "$domain" -alpn h2 2>/dev/null)
+  else
+    out=$(echo | openssl s_client -connect "${domain}:443" -servername "$domain" -alpn h2 2>/dev/null)
+  fi
+  t1=$(date +%s%3N 2>/dev/null || echo 0)
+  if [[ "$t0" =~ ^[0-9]+$ && "$t1" =~ ^[0-9]+$ && "$t1" -ge "$t0" ]]; then
+    ms=$((t1 - t0))
+  else
+    ms=0
+  fi
+
+  local errs=""
+  grep -q 'TLSv1\.3' <<< "$out" || errs+="缺少 TLSv1.3; "
+  grep -qE 'ALPN protocol:[[:space:]]*h2' <<< "$out" || errs+="缺少 ALPN h2; "
+  grep -qE 'X25519' <<< "$out" || errs+="缺少 X25519; "
+
+  # 快速检测是否套了 Cloudflare（防 CF 盾特征）
+  local hdr=""
+  if command -v curl >/dev/null 2>&1; then
+    hdr=$(curl -fsSI --max-time 3 "https://${domain}" 2>/dev/null | tr -d '\r' || true)
+  fi
+  if grep -qiE '^server:[[:space:]]*cloudflare' <<< "$hdr"; then
+    errs+="检测到 Cloudflare CDN; "
+  fi
+
+  if [ -n "$errs" ]; then
+    printf '%s\n' "${errs%; }" >&2
+    return 1
+  fi
+  printf '%s\n' "$ms"
+  return 0
+}
+
+# 分地区 Reality SNI 并发测速推荐 + 选后实时复检（结果写入全局变量 NEW_VAL）
+select_reality_sni() {
+  check_system_ip
+  local region
+  region=$(detect_vps_region)
+  local -a LOCAL_SNIS=()
+  case "$region" in
+    TW) LOCAL_SNIS=("www.asus.com" "www.msi.com" "www.gigabyte.com" "www.evaair.com" "www.gskill.com") ;;
+    JP) LOCAL_SNIS=("www.sony.jp" "www.yahoo.co.jp" "www.honda.co.jp" "www.yamaha.com" "www.lovelive-anime.jp") ;;
+    HK) LOCAL_SNIS=("www.mandarinoriental.com" "www.k11musea.com" "www.pacificplace.com.hk" "www.hko.gov.hk" "www.hku.hk") ;;
+    SG) LOCAL_SNIS=("www.grab.com" "www.changiairport.com" "nus.edu.sg" "www.smu.edu.sg" "www.sutd.edu.sg") ;;
+    US) LOCAL_SNIS=("www.ebay.com" "www.airbnb.com" "www.ups.com" "www.stanford.edu" "www.harvard.edu") ;;
+    CA) LOCAL_SNIS=("www.utoronto.ca" "www.ubc.ca" "www.ebay.com" "www.airbnb.com" "www.ups.com") ;;
+    KR) LOCAL_SNIS=("www.naver.com" "www.samsung.com" "www.koreanair.com" "www.coupang.com" "www.cj.net") ;;
+    GB) LOCAL_SNIS=("www.virginatlantic.com" "www.marksandspencer.com" "www.unilever.com" "www.arm.com" "www.cam.ac.uk") ;;
+    EU) LOCAL_SNIS=("www.adidas.com" "www.nokia.com" "www.mercedes-benz.com" "www.tudelft.nl" "www.postgresql.org") ;;
+  esac
+  local -a GLOBAL_SNIS=("www.gentoo.org" "www.python.org" "www.debian.org" "www.kernel.org" "addons.mozilla.org")
+
+  hint "\n $(text 282) ${region} (${COUNTRY4:-${COUNTRY6:-Unknown}})"
+  info " $(text 281)"
+
+  mkdir -p "$TEMP_DIR"
+  local probe_dir="${TEMP_DIR}/sni_probe_$$"
+  rm -rf "$probe_dir" && mkdir -p "$probe_dir"
+
+  local d idx=0
+  for d in "${LOCAL_SNIS[@]}"; do
+    ((idx++)) || true
+    (
+      local ms
+      if ms=$(verify_reality_sni "$d" 2>/dev/null); then
+        printf '%05d\t%s\t%s\n' "$ms" "$d" "LOCAL:${region}" > "${probe_dir}/${idx}.ok"
+      fi
+    ) &
+  done
+  for d in "${GLOBAL_SNIS[@]}"; do
+    ((idx++)) || true
+    (
+      local ms
+      if ms=$(verify_reality_sni "$d" 2>/dev/null); then
+        printf '%05d\t%s\t%s\n' "$ms" "$d" "GLOBAL" > "${probe_dir}/${idx}.ok"
+      fi
+    ) &
+  done
+  wait 2>/dev/null
+
+  local -a CAND_DOMAINS=() CAND_MS=() CAND_TAG=()
+  local ms_raw dom tag
+  while IFS=$'\t' read -r ms_raw dom tag; do
+    [ -z "$dom" ] && continue
+    CAND_DOMAINS+=("$dom")
+    CAND_MS+=("$((10#$ms_raw))")
+    CAND_TAG+=("$tag")
+  done < <(cat "${probe_dir}"/*.ok 2>/dev/null | sort -n)
+  rm -rf "$probe_dir"
+
+  echo ""
+  local i
+  for i in "${!CAND_DOMAINS[@]}"; do
+    local badge="[全球]"
+    [[ "${CAND_TAG[i]}" == LOCAL:* ]] && badge="[本土 ${region}]"
+    hint " $(printf '%2d' $((i+1))). $(printf '%-10s' "$badge")  $(printf '%-30s' "${CAND_DOMAINS[i]}")  (${CAND_MS[i]} ms | TLSv1.3+h2+X25519)"
+  done
+
+  local sni_input=""
+  reading "\n $(text 283) " sni_input
+  sni_input=$(printf '%s' "$sni_input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  [ -z "$sni_input" ] && NEW_VAL="" && return 0
+
+  if [[ "$sni_input" =~ ^[0-9]+$ ]] && [ "$sni_input" -ge 1 ] && [ "$sni_input" -le "${#CAND_DOMAINS[@]}" ]; then
+    NEW_VAL="${CAND_DOMAINS[$((sni_input - 1))]}"
+    return 0
+  fi
+
+  # 用户手动输入自定义域名：去掉 https:// 与路径后做实时复检
+  sni_input=$(printf '%s' "$sni_input" | sed -E 's#^https?://##; s#/.*$##; s#:[0-9]+$##')
+  info "\n $(text 284) ${sni_input} ..."
+  local chk_err chk_ms
+  if chk_ms=$(verify_reality_sni "$sni_input" 2>"${TEMP_DIR}/sni_chk.err"); then
+    rm -f "${TEMP_DIR}/sni_chk.err"
+    info " $(text 285) (${chk_ms} ms)"
+    NEW_VAL="$sni_input"
+    return 0
+  else
+    chk_err=$(cat "${TEMP_DIR}/sni_chk.err" 2>/dev/null)
+    rm -f "${TEMP_DIR}/sni_chk.err"
+    warning " $(text 286) ${chk_err}"
+    local force_sni=""
+    reading " $(text 287) " force_sni
+    if [[ "${force_sni^^}" =~ ^Y ]]; then
+      NEW_VAL="$sni_input"
+    else
+      NEW_VAL=""
+    fi
+    return 0
+  fi
+}
+
 # 更换优选域名 / reality SNI / 节点名 / UUID
 change_config() {
   [ ! -d "${WORK_DIR}" ] && error " $(text 107) "
@@ -2843,7 +3013,11 @@ change_config() {
   fi
 
   hint ""
-  [ -z "$NEW_VAL" ] && reading " $(text 134) " NEW_VAL
+  if [ "$KEY" = "sni" ]; then
+    select_reality_sni
+  else
+    [ -z "$NEW_VAL" ] && reading " $(text 134) " NEW_VAL
+  fi
   [ -z "$NEW_VAL" ] && info " $(text 135) " && return
 
   # 各 key 的校验
